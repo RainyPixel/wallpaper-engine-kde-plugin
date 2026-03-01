@@ -82,7 +82,7 @@ cmake --build build
 
 ### Arch Linux
 ```bash
-sudo pacman -S extra-cmake-modules plasma-framework gst-libav ninja \
+sudo pacman -S extra-cmake-modules libplasma gst-libav ninja \
 base-devel mpv qt6-declarative qt6-websockets qt6-webchannel vulkan-headers cmake lz4
 ```
 

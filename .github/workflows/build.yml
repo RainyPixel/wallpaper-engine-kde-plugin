@@ -18,8 +18,11 @@ jobs:
         run: pacman -Sy --noconfirm git
 
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Checkout submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --force --recursive
 
       - name: Install build dependencies
         run: |
@@ -58,8 +61,11 @@ jobs:
         run: dnf install -y git
 
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Checkout submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --force --recursive
 
       - name: Enable RPM Fusion (needed for mpv)
         run: |

@@ -1,7 +1,6 @@
 #pragma once
 #include <QObject>
 #include <QString>
-#include <QUrl>
 #include <QVariantMap>
 #include <QVariantList>
 

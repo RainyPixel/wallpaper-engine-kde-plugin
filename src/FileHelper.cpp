@@ -57,24 +57,6 @@ qint64 FileHelper::getDirSize(const QString& path, int depth) {
             totalSize += it.fileInfo().size();
         }
     } else {
-        // Limited depth iteration
-        for (int d = 1; d <= depth; ++d) {
-            QString pattern;
-            for (int i = 0; i < d; ++i) {
-                pattern += "*/";
-            }
-            pattern.chop(1); // Remove trailing /
-
-            QDirIterator it(path, QStringList() << "*", QDir::Files);
-            if (d == 1) {
-                while (it.hasNext()) {
-                    it.next();
-                    totalSize += it.fileInfo().size();
-                }
-            }
-        }
-
-        // Simpler approach: just iterate with depth limit
         std::function<qint64(const QString&, int)> calcSize = [&](const QString& dirPath,
                                                                   int currentDepth) -> qint64 {
             if (currentDepth > depth) return 0;

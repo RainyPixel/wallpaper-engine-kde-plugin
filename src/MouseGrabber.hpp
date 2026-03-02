@@ -8,40 +8,39 @@
 namespace wekde
 {
 
-class MouseGrabber : public QQuickItem
-{
+class MouseGrabber : public QQuickItem {
     Q_OBJECT
-	Q_PROPERTY(bool forceCapture READ forceCapture WRITE setForceCapture NOTIFY forceCaptureChanged)
-	Q_PROPERTY(QQuickItem* target READ target WRITE setTarget NOTIFY targetChanged)
+    Q_PROPERTY(bool forceCapture READ forceCapture WRITE setForceCapture NOTIFY forceCaptureChanged)
+    Q_PROPERTY(QQuickItem* target READ target WRITE setTarget NOTIFY targetChanged)
 
 public:
-	MouseGrabber(QQuickItem *parent = nullptr);
-	virtual ~MouseGrabber() override {};
+    MouseGrabber(QQuickItem* parent = nullptr);
+    virtual ~MouseGrabber() override {};
 
-	bool forceCapture() const;
-	QQuickItem* target() const; 
+    bool        forceCapture() const;
+    QQuickItem* target() const;
 
-	void setForceCapture(bool);
-	void setTarget(QQuickItem*);
+    void setForceCapture(bool);
+    void setTarget(QQuickItem*);
 
-	Q_INVOKABLE void sendEvent(QObject*, QEvent*);
+    Q_INVOKABLE void sendEvent(QObject*, QEvent*);
 
 protected:
-	void mouseUngrabEvent() override;
-	void mousePressEvent(QMouseEvent*) override;
-	void mouseMoveEvent(QMouseEvent*) override;
-	void mouseReleaseEvent(QMouseEvent *) override;
-	void mouseDoubleClickEvent(QMouseEvent *) override;
-	void hoverMoveEvent(QHoverEvent *) override;
+    void mouseUngrabEvent() override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
+    void hoverMoveEvent(QHoverEvent*) override;
 
 signals:
-	void forceCaptureChanged();
-	void targetChanged();
+    void forceCaptureChanged();
+    void targetChanged();
 
 private:
-    void sendMouseEvent(QMouseEvent*);
-    void sendHoverEvent(QHoverEvent*);
-	bool m_forceCapture {false};
-    QPointer<QQuickItem> m_target {nullptr};
+    void                 sendMouseEvent(QMouseEvent*);
+    void                 sendHoverEvent(QHoverEvent*);
+    bool                 m_forceCapture { false };
+    QPointer<QQuickItem> m_target { nullptr };
 };
-}
+} // namespace wekde

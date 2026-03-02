@@ -293,7 +293,7 @@ QtObject {
     }
 
     function checklib_websockets(parentItem) {
-        return checklib('QtWebSockets 1.0', parentItem)
+        return checklib('QtWebSockets', parentItem)
     }
 
     function checklib_webchannel(parentItem) {

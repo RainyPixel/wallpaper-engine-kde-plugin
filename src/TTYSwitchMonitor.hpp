@@ -2,14 +2,15 @@
 #include <QQuickItem>
 #include <QDBusConnection>
 
-namespace wekde {
+namespace wekde
+{
 
 class TTYSwitchMonitor : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(bool sleeping READ isSleeping NOTIFY ttySwitch)
 
 public:
-    TTYSwitchMonitor(QQuickItem *parent = nullptr);
+    TTYSwitchMonitor(QQuickItem* parent = nullptr);
 
     bool isSleeping() const { return m_sleeping; }
 
@@ -23,4 +24,4 @@ private:
     bool m_sleeping;
 };
 
-}
+} // namespace wekde

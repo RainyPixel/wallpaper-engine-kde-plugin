@@ -1,0 +1,26 @@
+name: Lint
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  clang-format:
+    name: clang-format check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Check C++ formatting
+        # --dry-run prints differences; --Werror turns any difference into a
+        # non-zero exit code so the job fails on style violations.
+        run: |
+          find src -name "*.cpp" -o -name "*.hpp" | \
+            xargs clang-format --dry-run --Werror

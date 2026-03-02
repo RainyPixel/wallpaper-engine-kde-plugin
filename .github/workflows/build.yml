@@ -1,0 +1,104 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  # ── Arch Linux (primary target distribution) ──────────────────────────────
+  build-arch:
+    name: Full build — Arch Linux
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install git (needed for checkout action inside container)
+        run: pacman -Sy --noconfirm git
+
+      - uses: actions/checkout@v4
+
+      - name: Checkout submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --force --recursive
+
+      - name: Install build dependencies
+        run: |
+          pacman -Su --noconfirm
+          pacman -S --noconfirm \
+            base-devel \
+            cmake \
+            ninja \
+            extra-cmake-modules \
+            libplasma \
+            qt6-declarative \
+            qt6-websockets \
+            qt6-webchannel \
+            vulkan-headers \
+            mpv \
+            lz4
+
+      - name: Configure
+        run: |
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+  # ── Fedora (secondary target distribution) ───────────────────────────────
+  build-fedora:
+    name: Full build — Fedora
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install git
+        run: dnf install -y git
+
+      - uses: actions/checkout@v4
+
+      - name: Checkout submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --force --recursive
+
+      - name: Enable RPM Fusion (needed for mpv)
+        run: |
+          dnf install -y \
+            "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+            "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
+          dnf swap -y ffmpeg-free ffmpeg --allowerasing
+          dnf install -y ffmpeg-devel --allowerasing
+
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            cmake \
+            ninja-build \
+            extra-cmake-modules \
+            vulkan-headers \
+            plasma-workspace-devel \
+            kf6-plasma-devel \
+            kf6-kcoreaddons-devel \
+            kf6-kpackage-devel \
+            lz4-devel \
+            mpv-libs-devel \
+            qt6-qtbase-private-devel \
+            libplasma-devel \
+            qt6-qtwebchannel-devel \
+            qt6-qtwebsockets-devel \
+            qt6-qtdeclarative-devel
+
+      - name: Configure
+        run: |
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build -j$(nproc)

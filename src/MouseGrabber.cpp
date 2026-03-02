@@ -67,7 +67,7 @@ void MouseGrabber::sendMouseEvent(QMouseEvent* event) {
 void MouseGrabber::sendHoverEvent(QHoverEvent* event) {
     if (m_target) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-        auto newPos = mapToItem(m_target, event->position());
+        auto        newPos = mapToItem(m_target, event->position());
         QHoverEvent temp(event->type(),
                          newPos,
                          event->globalPosition(),

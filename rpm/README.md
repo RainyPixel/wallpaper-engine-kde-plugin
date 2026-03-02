@@ -1,31 +1,55 @@
-### This is for rpm-ostree based system
+## Building an RPM (Fedora / rpm-ostree / Bazzite)
 
+Building an RPM is the recommended approach for immutable systems (Bazzite, Silverblue, etc.)
+where layered packages survive OS updates.
+
+### Prerequisites: RPM Fusion + ffmpeg
+
+```sh
+sudo dnf install -y \
+    https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+    https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+
+sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing
+sudo dnf install -y ffmpeg-devel --allowerasing
 ```
-# Create and enter toolbox
-toolbox create && toolbox enter
 
-# Add build dependencies
-sudo dnf install vulkan-headers plasma-workspace-devel kf6-plasma-devel gstreamer1-libav \
-lz4-devel mpv-libs-devel python3-websockets qt6-qtbase-private-devel libplasma-devel \
-qt5-qtx11extras-devel qt6-qtwebchannel-devel qt6-qtwebsockets-devel cmake ninja rpmbuild extra-cmake-modules
+### Build steps
 
-# Clone repo
-git clone https://github.com/catsout/wallpaper-engine-kde-plugin.git
+```sh
+git clone https://github.com/captsilver/wallpaper-engine-kde-plugin.git
 cd wallpaper-engine-kde-plugin
 
-# Install plugin package 
+# Install all build dependencies declared in the spec
+sudo dnf builddep ./rpm/wek.spec
+
+# Initialise submodules
+git submodule update --init --force --recursive
+
+# Copy QML plugin files (required at runtime)
 mkdir -p ~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde/
 cp -R ./plugin/* ~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde/
 
-mkdir -p ~/rpmbuild/SOURCES
+# Use tmpfs to speed up the build and avoid wearing disk
+sudo mount -t tmpfs tmpfs ~/rpmbuild/BUILD
 
-# Rpmbuild in toolbox
 rpmbuild --define="commit $(git rev-parse HEAD)" \
+    --define="reporoot $(pwd)" \
     --define="glslang_ver 11.8.0" \
     --undefine=_disable_source_fetch \
     -ba ./rpm/wek.spec
 
-# Install package
-cd ~/rpmbuild/RPMS/x86_64
-rpm-ostree install --uninstall=wallpaper-engine-kde-plugin ./<select-rpm-to-install>.rpm
+sudo umount ~/rpmbuild/BUILD
+```
+
+### Install
+
+Standard Fedora:
+```sh
+sudo dnf install ~/rpmbuild/RPMS/x86_64/wallpaper-engine-kde-plugin-qt6-*.rpm
+```
+
+rpm-ostree / Bazzite:
+```sh
+rpm-ostree install ~/rpmbuild/RPMS/x86_64/wallpaper-engine-kde-plugin-qt6-*.rpm
 ```

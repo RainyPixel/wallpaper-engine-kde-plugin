@@ -1,0 +1,34 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: FileHelper unit tests (Qt6 only)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        # No submodules needed — tests only depend on Qt6 Core + Test
+
+      - name: Install Qt6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev cmake ninja-build
+
+      - name: Configure (standalone test build)
+        # Build the tests/ directory directly — avoids the KDE/Plasma/mpv/Vulkan
+        # dependencies that the full plugin requires.
+        run: |
+          cmake -B build/tests -S tests \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build/tests
+
+      - name: Run tests
+        run: ctest --test-dir build/tests --output-on-failure -V

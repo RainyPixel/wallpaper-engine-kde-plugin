@@ -8,12 +8,13 @@
 #include <QStandardPaths>
 #include <QDateTime>
 
-namespace wekde {
+namespace wekde
+{
 
-FileHelper::FileHelper(QObject* parent) : QObject(parent) {
+FileHelper::FileHelper(QObject* parent): QObject(parent) {
     // Ensure config directory exists
     QDir dir(wallpaperConfigDir());
-    if (!dir.exists()) {
+    if (! dir.exists()) {
         dir.mkpath(".");
     }
 }
@@ -25,9 +26,7 @@ QString FileHelper::configDir() const {
     return xdgConfig + "/wekde";
 }
 
-QString FileHelper::wallpaperConfigDir() const {
-    return configDir() + "/wallpaper";
-}
+QString FileHelper::wallpaperConfigDir() const { return configDir() + "/wallpaper"; }
 
 QString FileHelper::wallpaperConfigFile(const QString& id) const {
     return wallpaperConfigDir() + "/" + id + ".json";
@@ -35,7 +34,7 @@ QString FileHelper::wallpaperConfigFile(const QString& id) const {
 
 QByteArray FileHelper::readFile(const QString& path) {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (! file.open(QIODevice::ReadOnly)) {
         qWarning() << "FileHelper: Cannot open file:" << path;
         return QByteArray();
     }
@@ -44,9 +43,9 @@ QByteArray FileHelper::readFile(const QString& path) {
 
 qint64 FileHelper::getDirSize(const QString& path, int depth) {
     qint64 totalSize = 0;
-    QDir dir(path);
+    QDir   dir(path);
 
-    if (!dir.exists()) {
+    if (! dir.exists()) {
         return 0;
     }
 
@@ -58,29 +57,12 @@ qint64 FileHelper::getDirSize(const QString& path, int depth) {
             totalSize += it.fileInfo().size();
         }
     } else {
-        // Limited depth iteration
-        for (int d = 1; d <= depth; ++d) {
-            QString pattern;
-            for (int i = 0; i < d; ++i) {
-                pattern += "*/";
-            }
-            pattern.chop(1); // Remove trailing /
-
-            QDirIterator it(path, QStringList() << "*", QDir::Files);
-            if (d == 1) {
-                while (it.hasNext()) {
-                    it.next();
-                    totalSize += it.fileInfo().size();
-                }
-            }
-        }
-
-        // Simpler approach: just iterate with depth limit
-        std::function<qint64(const QString&, int)> calcSize = [&](const QString& dirPath, int currentDepth) -> qint64 {
+        std::function<qint64(const QString&, int)> calcSize = [&](const QString& dirPath,
+                                                                  int currentDepth) -> qint64 {
             if (currentDepth > depth) return 0;
 
             qint64 size = 0;
-            QDir d(dirPath);
+            QDir   d(dirPath);
 
             for (const QFileInfo& info : d.entryInfoList(QDir::Files | QDir::NoDotAndDotDot)) {
                 size += info.size();
@@ -104,37 +86,37 @@ qint64 FileHelper::getDirSize(const QString& path, int depth) {
 QVariantMap FileHelper::getFolderList(const QString& path, const QVariantMap& opt) {
     QVariantMap result;
 
-    bool onlyDir = opt.value("only_dir", true).toBool();
+    bool        onlyDir   = opt.value("only_dir", true).toBool();
     QStringList fallbacks = opt.value("fallbacks", QStringList()).toStringList();
 
     // Find first existing directory
     QString folder = path;
-    QDir dir(folder);
+    QDir    dir(folder);
 
-    if (!dir.exists()) {
+    if (! dir.exists()) {
         for (const QString& fb : fallbacks) {
             QDir fbDir(fb);
             if (fbDir.exists()) {
                 folder = fb;
-                dir = fbDir;
+                dir    = fbDir;
                 break;
             }
         }
     }
 
-    if (!dir.exists()) {
+    if (! dir.exists()) {
         return QVariantMap(); // Return null/empty
     }
 
     result["folder"] = folder;
 
-    QVariantList items;
+    QVariantList  items;
     QDir::Filters filters = onlyDir ? QDir::Dirs : (QDir::Dirs | QDir::Files);
     filters |= QDir::NoDotAndDotDot;
 
     for (const QFileInfo& info : dir.entryInfoList(filters)) {
         QVariantMap item;
-        item["name"] = info.fileName();
+        item["name"]  = info.fileName();
         item["mtime"] = static_cast<qint64>(info.lastModified().toSecsSinceEpoch());
         items.append(item);
     }
@@ -145,19 +127,19 @@ QVariantMap FileHelper::getFolderList(const QString& path, const QVariantMap& op
 
 QVariantMap FileHelper::readWallpaperConfig(const QString& id) {
     QString filePath = wallpaperConfigFile(id);
-    QFile file(filePath);
+    QFile   file(filePath);
 
-    if (!file.exists()) {
+    if (! file.exists()) {
         return QVariantMap();
     }
 
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (! file.open(QIODevice::ReadOnly)) {
         qWarning() << "FileHelper: Cannot read config:" << filePath;
         return QVariantMap();
     }
 
     QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (doc.isNull() || !doc.isObject()) {
+    if (doc.isNull() || ! doc.isObject()) {
         return QVariantMap();
     }
 
@@ -175,9 +157,9 @@ void FileHelper::writeWallpaperConfig(const QString& id, const QVariantMap& chan
 
     // Write back
     QString filePath = wallpaperConfigFile(id);
-    QFile file(filePath);
+    QFile   file(filePath);
 
-    if (!file.open(QIODevice::WriteOnly)) {
+    if (! file.open(QIODevice::WriteOnly)) {
         qWarning() << "FileHelper: Cannot write config:" << filePath;
         return;
     }

@@ -31,6 +31,7 @@ class MpvObject : public QQuickFramebufferObject {
     Q_PROPERTY(bool mute READ mute WRITE setMute)
     Q_PROPERTY(QString logfile READ logfile WRITE setLogfile)
     Q_PROPERTY(int volume READ volume WRITE setVolume)
+    Q_PROPERTY(QString hwdec READ hwdec WRITE setHwdec)
 
     friend class MpvRender;
 
@@ -54,10 +55,12 @@ public:
     QString logfile() const;
     int     volume() const;
 
-    void setSource(const QUrl& source);
-    void setMute(const bool& mute);
-    void setLogfile(const QString& logfile);
-    void setVolume(const int& volume);
+    void    setSource(const QUrl& source);
+    void    setMute(const bool& mute);
+    void    setLogfile(const QString& logfile);
+    void    setVolume(const int& volume);
+    QString hwdec() const;
+    void    setHwdec(const QString& hwdec);
 
 public slots:
     void play();
@@ -77,9 +80,10 @@ signals:
     void firstFrame();
 
 private:
-    bool   inited = false;
-    QUrl   m_source;
-    Status m_status = Stopped;
+    bool    inited = false;
+    QUrl    m_source;
+    Status  m_status = Stopped;
+    QString m_hwdec { "auto" };
 
 private:
     mpv_handle*                m_mpv { nullptr };

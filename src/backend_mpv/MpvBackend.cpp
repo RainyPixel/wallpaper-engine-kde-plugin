@@ -206,6 +206,14 @@ void MpvObject::setMute(const bool& mute) {
 
 void MpvObject::setVolume(const int& volume) { setProperty("volume", volume); }
 
+QString MpvObject::hwdec() const { return m_hwdec; }
+
+void MpvObject::setHwdec(const QString& hwdec) {
+    if (m_hwdec == hwdec) return;
+    m_hwdec = hwdec;
+    mpv_set_option_string(m_mpv, "hwdec", hwdec.toUtf8().constData());
+}
+
 void MpvObject::setLogfile(const QString& logfile) { setProperty("log-file", logfile); }
 
 void MpvObject::setSource(const QUrl& source) {

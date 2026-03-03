@@ -58,6 +58,7 @@ Item{
         anchors.fill: parent
         mute: background.mute
         volume: 0
+        hwdec: background.mpvHwdec
         Connections {
             ignoreUnknownSignals: true
             onFirstFrame: {
@@ -65,17 +66,9 @@ Item{
             }
         }
     }
-    Connections {
-        target: background
-        function onMpvHwdecChanged() {
-            player.setProperty("hwdec", background.mpvHwdec);
-        }
-    }
-
     Component.onCompleted:{
         background.nowBackend = 'mpv';
         videoItem.displayModeChanged();
-        player.setProperty("hwdec", background.mpvHwdec);
     }
 
     function play(){

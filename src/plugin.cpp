@@ -7,6 +7,7 @@
 #include "TTYSwitchMonitor.hpp"
 #include "PluginInfo.hpp"
 #include "FileHelper.hpp"
+#include "GamemodeMonitor.hpp"
 
 constexpr std::array<uint, 2> WPVer { 1, 2 };
 
@@ -24,6 +25,7 @@ public:
         qmlRegisterType<mpv::MpvObject>(uri, WPVer[0], WPVer[1], "Mpv");
         qmlRegisterType<wekde::TTYSwitchMonitor>(uri, WPVer[0], WPVer[1], "TTYSwitchMonitor");
         qmlRegisterType<wekde::FileHelper>(uri, WPVer[0], WPVer[1], "FileHelper");
+        qmlRegisterType<wekde::GamemodeMonitor>(uri, WPVer[0], WPVer[1], "GamemodeMonitor");
     }
 };
 

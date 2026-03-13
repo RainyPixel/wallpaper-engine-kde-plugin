@@ -16,6 +16,7 @@ add_library(${PROJECT_NAME}
 	TTYSwitchMonitor.cpp
 	PluginInfo.cpp
 	FileHelper.cpp
+	GamemodeMonitor.cpp
 	qmldir
 )
 

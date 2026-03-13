@@ -33,6 +33,7 @@ Flickable {
     property alias cfg_PauseOnBatPower: chkbox_pauseOnBatPower.checked
     property alias cfg_PauseBatPercent: spin_pauseBatPercent.value
 
+    property alias cfg_PauseOnGamemode: chkbox_pauseOnGameMode.checked
 
     Layout.fillWidth: true
     ScrollBar.vertical: ScrollBar { id: scrollbar }
@@ -122,6 +123,13 @@ Flickable {
                         from: 0
                         to: 100
                         stepSize: 1
+                }
+            }
+            OptionItem {
+                text: 'Pause if gamemode is started'
+                text_color: Kirigami.Theme.textColor
+                actor: Switch {
+                    id: chkbox_pauseOnGameMode
                 }
             }
             OptionItem {

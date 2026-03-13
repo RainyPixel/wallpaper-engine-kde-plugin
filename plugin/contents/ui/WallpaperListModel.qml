@@ -192,7 +192,7 @@ Item {
     function loadFolderLists(folders) {
         const proxyModel = []
         folders.forEach(folder => {
-            if(!folder) return Promise.resolve();
+            if(!folder || !folder.items) return;
             // seems qml's "for" is a function
             const folder_dir = folder.folder;
             folder.items.forEach(el => {

@@ -42,6 +42,10 @@
       <label>Pause Battery Percent</label>
       <default>0</default>
     </entry>
+    <entry name="PauseOnGamemode" type="Bool">
+      <label>Pause when gamemode is enabled</label>
+      <default>false</default>
+    </entry>
     <entry name="SortMode" type="Int">
       <label>Sort mode</label>
       <default>0</default>

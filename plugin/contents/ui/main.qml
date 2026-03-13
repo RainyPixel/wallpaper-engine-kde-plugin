@@ -86,8 +86,10 @@ Rectangle {
         });
     }
 
+    property bool   pauseOnGamemode: wallpaper.configuration.PauseOnGamemode
+
     // auto pause
-    property bool   ok: !windowModel.reqPause && !powerSource.reqPause
+    property bool   ok: !windowModel.reqPause && !powerSource.reqPause && !(gamemodeLoader.item ? gamemodeLoader.item.reqPause : false)
 
     // detect TTY switch and pause wallpaper(s)
     TTYSwitchMonitor {
@@ -100,6 +102,15 @@ Rectangle {
                 console.log("Waking up (VT switch back)");
                 this.play();
             }
+        }
+    }
+
+    Loader {
+        id: gamemodeLoader
+        active: background.pauseOnGamemode
+
+        sourceComponent: Component {
+            GamemodeMonitor {}
         }
     }
 

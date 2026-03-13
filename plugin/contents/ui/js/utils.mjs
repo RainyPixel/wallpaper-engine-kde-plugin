@@ -42,7 +42,7 @@ export function basename(path) {
 }
 
 export function dirname(path) {
-    return path.substring(0, str.lastIndexOf("/"));
+    return path.substring(0, path.lastIndexOf("/"));
 }
 
 export function trimCharR(str, c) {

@@ -43,7 +43,7 @@ void WPPuppet::prepared() {
 std::span<const Eigen::Affine3f> WPPuppet::genFrame(WPPuppetLayer& puppet_layer,
                                                     double         time) noexcept {
     double global_blend = puppet_layer.m_global_blend;
-    double total_blend = puppet_layer.m_total_blend;
+    double total_blend  = puppet_layer.m_total_blend;
 
     puppet_layer.updateInterpolation(time);
 
@@ -69,35 +69,39 @@ std::span<const Eigen::Affine3f> WPPuppet::genFrame(WPPuppetLayer& puppet_layer,
             assert(i < layer.anim->bframes_array.size());
             if (i >= layer.anim->bframes_array.size()) continue;
 
-            auto&  info    = layer.interp_info;
-            auto&  frame_base = layer.anim->bframes_array[i].frames[(usize)0];
-            auto&  frame_a = layer.anim->bframes_array[i].frames[(usize)info.frame_a];
-            auto&  frame_b = layer.anim->bframes_array[i].frames[(usize)info.frame_b];
+            auto& info       = layer.interp_info;
+            auto& frame_base = layer.anim->bframes_array[i].frames[(usize)0];
+            auto& frame_a    = layer.anim->bframes_array[i].frames[(usize)info.frame_a];
+            auto& frame_b    = layer.anim->bframes_array[i].frames[(usize)info.frame_b];
 
-            double t = info.t;
-            double one_t   = 1.0f - info.t;
+            double t     = info.t;
+            double one_t = 1.0f - info.t;
 
             // break up the delta quaternions from the animation start quaternion
             // blend the starting quaternion using the reduced blending factor
             // blend the delta using the full blending factor
             auto frame_a_quat_delta = frame_a.quaternion * frame_base.quaternion.conjugate();
             auto frame_b_quat_delta = frame_b.quaternion * frame_base.quaternion.conjugate();
-            quat *= frame_a_quat_delta.slerp(info.t, frame_b_quat_delta).slerp(1.0 - layer.anim_layer.blend, ident) 
-                * frame_base.quaternion.slerp(1.0 - (layer.blend), ident);
-                       
+            quat *= frame_a_quat_delta.slerp(info.t, frame_b_quat_delta)
+                        .slerp(1.0 - layer.anim_layer.blend, ident) *
+                    frame_base.quaternion.slerp(1.0 - (layer.blend), ident);
+
             // break up the delta positions from the animation start position
             // blend the starting position using the reduced blending factor
             // blend the delta using the full blending factor
             auto frame_a_pos_delta = frame_a.position - frame_base.position;
             auto frame_b_pos_delta = frame_b.position - frame_base.position;
-            trans += (layer.blend * frame_base.position) + (layer.anim_layer.blend * (frame_a_pos_delta * one_t + frame_b_pos_delta * t));
+            trans += (layer.blend * frame_base.position) +
+                     (layer.anim_layer.blend * (frame_a_pos_delta * one_t + frame_b_pos_delta * t));
 
             // break up the delta scales from the animation start scale
             // blend the starting scale using the reduced blending factor
             // blend the delta using the full blending factor
             auto& frame_a_scale_delta = frame_a.scale - frame_base.scale;
             auto& frame_b_scale_delta = frame_b.scale - frame_base.scale;
-            scale += (layer.blend * frame_base.scale) + (layer.anim_layer.blend * (frame_a_scale_delta * one_t + frame_b_scale_delta * info.t));
+            scale += (layer.blend * frame_base.scale) +
+                     (layer.anim_layer.blend *
+                      (frame_a_scale_delta * one_t + frame_b_scale_delta * info.t));
         }
         affine.pretranslate(trans);
         affine.rotate(quat.slerp(global_blend, ident).cast<float>());
@@ -143,12 +147,12 @@ WPPuppet::Animation::getInterpolationInfo(double* cur_time) const {
 
 void WPPuppetLayer::prepared(std::span<AnimationLayer> alayers) {
     m_layers.resize(alayers.size());
-    double& blend = m_global_blend;
+    double& blend       = m_global_blend;
     double& total_blend = m_total_blend;
 
     total_blend = 0.0;
     for (int i = 0; i < alayers.size(); i++) {
-        if(alayers[i].visible){
+        if (alayers[i].visible) {
             total_blend += alayers[i].blend;
         }
     }
@@ -163,16 +167,13 @@ void WPPuppetLayer::prepared(std::span<AnimationLayer> alayers) {
             });
             bool ok = it != anims.end() && layer.visible;
 
-            double &total_blend = m_total_blend;
+            double& total_blend = m_total_blend;
 
             if (ok) {
-                if (total_blend > 1.0)
-                {
+                if (total_blend > 1.0) {
                     cur_blend = layer.blend / total_blend;
-                    blend = 0.0;
-                }
-                else
-                {
+                    blend     = 0.0;
+                } else {
                     cur_blend = blend * layer.blend;
                     blend *= 1.0f - layer.blend;
                     blend = blend < 0.0f ? 0.0f : blend;

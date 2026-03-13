@@ -22,7 +22,8 @@ class SceneObject : public QQuickItem {
     Q_PROPERTY(float speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(float volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted)
-    Q_PROPERTY(QString userProperties READ userProperties WRITE setUserProperties NOTIFY userPropertiesChanged)
+    Q_PROPERTY(QString userProperties READ userProperties WRITE setUserProperties NOTIFY
+                   userPropertiesChanged)
 public:
     constexpr static std::string_view CACHE_DIR { "wescene-renderer" };
     static std::string                GetDefaultCachePath();
@@ -40,11 +41,11 @@ public:
     void setSource(const QUrl& source);
     void setAssets(const QUrl& assets);
 
-    int   fps() const;
-    int   fillMode() const;
-    float speed() const;
-    float volume() const;
-    bool  muted() const;
+    int     fps() const;
+    int     fillMode() const;
+    float   speed() const;
+    float   volume() const;
+    bool    muted() const;
     QString userProperties() const;
 
     void setFps(int);
@@ -85,11 +86,11 @@ private:
     QUrl m_source;
     QUrl m_assets;
 
-    int   m_fps { 15 };
-    int   m_fillMode { FillMode::ASPECTCROP };
-    float m_speed { 1.0f };
-    float m_volume { 1.0f };
-    bool  m_muted { false };
+    int     m_fps { 15 };
+    int     m_fillMode { FillMode::ASPECTCROP };
+    float   m_speed { 1.0f };
+    float   m_volume { 1.0f };
+    bool    m_muted { false };
     QString m_userProperties;
 
 public:

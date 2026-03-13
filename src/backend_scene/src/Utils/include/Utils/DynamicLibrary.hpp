@@ -21,7 +21,7 @@ public:
     void Close();
 
     void* GetSymbolAddr(const char* name) const;
-    
+
     // not using func deduction
     template<typename T>
     bool GetSymbol(const char* name, T& pfunc) const {
@@ -32,4 +32,4 @@ public:
 private:
     void* handle { nullptr };
 };
-} // namespace wallpaper
+} // namespace utils

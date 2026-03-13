@@ -150,8 +150,8 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         }
 
         // Check if shader uses time-based uniforms (for caching optimization)
-        if (!ref.blocks.empty()) {
-            auto& block = ref.blocks.front();
+        if (! ref.blocks.empty()) {
+            auto& block          = ref.blocks.front();
             m_uses_time_uniforms = exists(block.member_map, G_TIME) ||
                                    exists(block.member_map, G_DAYTIME) ||
                                    exists(block.member_map, G_POINTERPOSITION);
@@ -321,7 +321,7 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
                         auto& indice = mesh.GetIndexArray(0);
                         u32   count  = (u32)((indice.RenderDataCount() * 2) / 3);
                         draw_count   = count * 3;
-                        auto& buf = index_buf;
+                        auto& buf    = index_buf;
                         if (! dyn_buf->writeToBuf(buf,
                                                   { (uint8_t*)indice.Data(), indice.DataSizeOf() }))
                             return;
@@ -449,11 +449,13 @@ void CustomShaderPass::execute(const Device&, RenderingResources& rr) {
     }
 
     // Single batched barrier call instead of one per texture
-    if (!image_barriers.empty()) {
+    if (! image_barriers.empty()) {
         cmd.PipelineBarrier(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                             VK_DEPENDENCY_BY_REGION_BIT,
-                            {}, {}, image_barriers);
+                            {},
+                            {},
+                            image_barriers);
     }
 
     if (m_desc.ubo_buf) {

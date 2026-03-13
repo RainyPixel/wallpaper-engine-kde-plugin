@@ -12,7 +12,7 @@
 #include <QtGui/QOffscreenSurface>
 #include <QtQuick/QSGSimpleTextureNode>
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-#include <QSGTexture>
+#    include <QSGTexture>
 #endif
 
 #include <clocale>
@@ -216,7 +216,8 @@ QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
             return (QSGTexture*)nullptr;
         });
         if (node->initGl()) {
-            node->initVulkan(width()*window()->devicePixelRatio(), height()*window()->devicePixelRatio());
+            node->initVulkan(width() * window()->devicePixelRatio(),
+                             height() * window()->devicePixelRatio());
 
             connect(
                 node, &TextureNode::redraw, window(), &QQuickWindow::update, Qt::QueuedConnection);

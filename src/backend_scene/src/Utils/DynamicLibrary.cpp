@@ -38,4 +38,4 @@ void* DynamicLibrary::GetSymbolAddr(const char* name) const {
     return reinterpret_cast<void*>(dlsym(handle, name));
 }
 
-}; // namespace wallpaper
+}; // namespace utils

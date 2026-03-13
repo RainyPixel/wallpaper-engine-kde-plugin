@@ -139,8 +139,8 @@ inline ImageHeader MakeFallbackHeader() {
 inline std::shared_ptr<Image> MakeFallbackImage(const std::string& name) {
     auto  img_ptr = std::make_shared<Image>();
     auto& img     = *img_ptr;
-    img.key        = name;
-    img.header     = MakeFallbackHeader();
+    img.key       = name;
+    img.header    = MakeFallbackHeader();
 
     Image::Slot slot;
     slot.width  = 1;
@@ -150,8 +150,9 @@ inline std::shared_ptr<Image> MakeFallbackImage(const std::string& name) {
     mipmap.width  = 1;
     mipmap.height = 1;
     mipmap.size   = 4;
-    mipmap.data   = ImageDataPtr(new uint8_t[4] { 255, 255, 255, 255 },
-                                 [](uint8_t* p) { delete[] p; });
+    mipmap.data   = ImageDataPtr(new uint8_t[4] { 255, 255, 255, 255 }, [](uint8_t* p) {
+        delete[] p;
+    });
     slot.mipmaps.push_back(std::move(mipmap));
     img.slots.push_back(std::move(slot));
     return img_ptr;
@@ -168,7 +169,7 @@ std::shared_ptr<Image> WPTexImageParser::Parse(const std::string& name) {
     std::shared_ptr<Image> img_ptr = std::make_shared<Image>();
     auto&                  img     = *img_ptr;
     img.key                        = name;
-    auto pfile = m_vfs->Open(path);
+    auto pfile                     = m_vfs->Open(path);
     if (! pfile) return nullptr;
     auto& file     = *pfile;
     auto  startpos = file.Tell();
@@ -304,7 +305,8 @@ ImageHeader WPTexImageParser::ParseHeader(const std::string& name) {
             sf.imageId = file.ReadInt32();
             if (sf.imageId < 0 || (usize)sf.imageId >= imageDatas.size()) {
                 LOG_ERROR("invalid sprite imageId %d (image_count=%zu), skipping sprite",
-                          sf.imageId, imageDatas.size());
+                          sf.imageId,
+                          imageDatas.size());
                 header.isSprite = false;
                 break;
             }

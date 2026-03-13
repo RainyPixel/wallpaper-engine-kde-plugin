@@ -90,7 +90,7 @@ inline std::string GenLinkTex(idx id) { return std::string(SpecTex_Link) + std::
 
 // Per-node offscreen render target for invisible dependency nodes
 constexpr std::string_view WE_OFFSCREEN_RT_PREFIX { "_rt_offscreen_" };
-inline std::string GenOffscreenRT(i32 id) {
+inline std::string         GenOffscreenRT(i32 id) {
     return std::string(WE_OFFSCREEN_RT_PREFIX) + std::to_string(id);
 }
 

@@ -22,11 +22,11 @@ public:
                 const auto& props = json["general"]["properties"];
                 for (auto it = props.begin(); it != props.end(); ++it) {
                     const std::string& name = it.key();
-                    const auto& prop = it.value();
+                    const auto&        prop = it.value();
                     if (prop.contains("value")) {
                         m_properties[name] = prop["value"];
-                        LOG_INFO("User property: %s = %s", name.c_str(),
-                                 prop["value"].dump().c_str());
+                        LOG_INFO(
+                            "User property: %s = %s", name.c_str(), prop["value"].dump().c_str());
                     }
                 }
                 return true;
@@ -38,9 +38,7 @@ public:
     }
 
     // Check if a property exists
-    bool HasProperty(const std::string& name) const {
-        return m_properties.count(name) > 0;
-    }
+    bool HasProperty(const std::string& name) const { return m_properties.count(name) > 0; }
 
     // Get property value as JSON (returns nullopt if not found)
     std::optional<nlohmann::json> GetProperty(const std::string& name) const {
@@ -55,11 +53,11 @@ public:
     // Handles: {"user": "propname", "value": default}
     // Also handles: {"user": {"condition": "x", "name": "propname"}, "value": default}
     nlohmann::json ResolveValue(const nlohmann::json& json) const {
-        if (!json.is_object()) {
+        if (! json.is_object()) {
             return json;
         }
 
-        if (!json.contains("user")) {
+        if (! json.contains("user")) {
             return json;
         }
 
@@ -86,7 +84,7 @@ public:
 
         // Get the user property value
         auto propValue = GetProperty(propName);
-        if (!propValue.has_value()) {
+        if (! propValue.has_value()) {
             // Property not found, use default value
             if (json.contains("value")) {
                 return json["value"];
@@ -95,11 +93,10 @@ public:
         }
 
         // Handle condition checking for visibility
-        if (!condition.empty()) {
+        if (! condition.empty()) {
             // For combo properties, check if value matches condition
-            std::string propStr = propValue->is_string()
-                ? propValue->get<std::string>()
-                : propValue->dump();
+            std::string propStr =
+                propValue->is_string() ? propValue->get<std::string>() : propValue->dump();
 
             bool matches = (propStr == condition);
 
@@ -126,7 +123,7 @@ public:
         if (jsonStr.empty()) return true;
         try {
             auto json = nlohmann::json::parse(jsonStr);
-            if (!json.is_object()) {
+            if (! json.is_object()) {
                 LOG_ERROR("User properties override is not an object");
                 return false;
             }
@@ -154,9 +151,8 @@ public:
         : m_previous(g_currentUserProperties) {
         g_currentUserProperties = props;
     }
-    ~UserPropertiesScope() {
-        g_currentUserProperties = m_previous;
-    }
+    ~UserPropertiesScope() { g_currentUserProperties = m_previous; }
+
 private:
     const WPUserProperties* m_previous;
 };

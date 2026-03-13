@@ -48,8 +48,8 @@ public:
     void        SetFinalBlend(BlendMode m) { m_final_blend = m; }
     // When true, ResolveEffect writes the final output to a per-node offscreen RT instead of
     // SpecTex_Default, so invisible dependency nodes don't composite into the main scene.
-    void        SetOffscreen(bool v) { m_is_offscreen = v; }
-    bool        IsOffscreen() const { return m_is_offscreen; }
+    void SetOffscreen(bool v) { m_is_offscreen = v; }
+    bool IsOffscreen() const { return m_is_offscreen; }
 
     void ResolveEffect(const SceneMesh& defualt_mesh, std::string_view effect_cam);
 

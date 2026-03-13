@@ -65,11 +65,11 @@ protected:
 private:
     bool InArea(idx pos) const noexcept { return pos >= 0 && pos <= Size(); }
     idx  moveForward(idx step) noexcept {
-         idx end     = m_pos + step;
-         end         = end > Size() ? Size() : end;
-         idx stepped = end - m_pos;
-         m_pos       = end;
-         return stepped;
+        idx end     = m_pos + step;
+        end         = end > Size() ? Size() : end;
+        idx stepped = end - m_pos;
+        m_pos       = end;
+        return stepped;
     };
 
     idx                  m_pos;

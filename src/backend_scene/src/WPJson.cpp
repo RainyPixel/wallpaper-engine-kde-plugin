@@ -11,7 +11,7 @@ namespace wallpaper
 // Resolve user property reference if present
 // Returns the resolved JSON value (either from user properties or default value)
 static nlohmann::json ResolveUserProperty(const nlohmann::json& json) {
-    if (!json.is_object() || !json.contains("user")) {
+    if (! json.is_object() || ! json.contains("user")) {
         return json;
     }
 

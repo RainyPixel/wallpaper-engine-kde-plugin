@@ -3,14 +3,13 @@
 using namespace wallpaper::wpscene;
 
 bool Orthogonalprojection::FromJson(const nlohmann::json& json) {
-    if(json.is_null()) return false;
-	if(json.contains("auto")) {
-		GET_JSON_NAME_VALUE(json, "auto", auto_);
-	}
-	else {
-		GET_JSON_NAME_VALUE(json, "width", width);
-		GET_JSON_NAME_VALUE(json, "height", height);
-	}
+    if (json.is_null()) return false;
+    if (json.contains("auto")) {
+        GET_JSON_NAME_VALUE(json, "auto", auto_);
+    } else {
+        GET_JSON_NAME_VALUE(json, "width", width);
+        GET_JSON_NAME_VALUE(json, "height", height);
+    }
     return true;
 }
 
@@ -24,18 +23,18 @@ bool WPSceneCamera::FromJson(const nlohmann::json& json) {
 bool WPSceneGeneral::FromJson(const nlohmann::json& json) {
     GET_JSON_NAME_VALUE(json, "ambientcolor", ambientcolor);
     GET_JSON_NAME_VALUE(json, "skylightcolor", skylightcolor);
-	GET_JSON_NAME_VALUE(json, "clearcolor", clearcolor);
-	GET_JSON_NAME_VALUE(json, "cameraparallax", cameraparallax);
-	GET_JSON_NAME_VALUE(json, "cameraparallaxamount", cameraparallaxamount);
-	GET_JSON_NAME_VALUE(json, "cameraparallaxdelay", cameraparallaxdelay);
-	GET_JSON_NAME_VALUE(json, "cameraparallaxmouseinfluence", cameraparallaxmouseinfluence);
-	GET_JSON_NAME_VALUE_NOWARN(json, "zoom", zoom);
-	GET_JSON_NAME_VALUE_NOWARN(json, "fov", fov);
-	GET_JSON_NAME_VALUE_NOWARN(json, "nearz", nearz);
-	GET_JSON_NAME_VALUE_NOWARN(json, "farz", farz);
-    if(json.contains("orthogonalprojection")) {
+    GET_JSON_NAME_VALUE(json, "clearcolor", clearcolor);
+    GET_JSON_NAME_VALUE(json, "cameraparallax", cameraparallax);
+    GET_JSON_NAME_VALUE(json, "cameraparallaxamount", cameraparallaxamount);
+    GET_JSON_NAME_VALUE(json, "cameraparallaxdelay", cameraparallaxdelay);
+    GET_JSON_NAME_VALUE(json, "cameraparallaxmouseinfluence", cameraparallaxmouseinfluence);
+    GET_JSON_NAME_VALUE_NOWARN(json, "zoom", zoom);
+    GET_JSON_NAME_VALUE_NOWARN(json, "fov", fov);
+    GET_JSON_NAME_VALUE_NOWARN(json, "nearz", nearz);
+    GET_JSON_NAME_VALUE_NOWARN(json, "farz", farz);
+    if (json.contains("orthogonalprojection")) {
         const auto& ortho = json.at("orthogonalprojection");
-        if(ortho.is_null())
+        if (ortho.is_null())
             isOrtho = false;
         else {
             isOrtho = true;
@@ -46,17 +45,17 @@ bool WPSceneGeneral::FromJson(const nlohmann::json& json) {
 }
 
 bool WPScene::FromJson(const nlohmann::json& json) {
-    if(json.contains("camera")) {
+    if (json.contains("camera")) {
         camera.FromJson(json.at("camera"));
     } else {
         LOG_ERROR("scene no camera");
         return false;
     }
-    if(json.contains("general")) {
+    if (json.contains("general")) {
         general.FromJson(json.at("general"));
     } else {
         LOG_ERROR("scene no genera data");
         return false;
     }
-    return true; 
+    return true;
 }

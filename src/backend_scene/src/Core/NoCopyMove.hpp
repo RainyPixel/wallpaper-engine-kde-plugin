@@ -3,19 +3,19 @@
 // policy class
 
 struct NoCopy {
-  protected:
-	NoCopy()  = default;
-	~NoCopy() = default;
+protected:
+    NoCopy()  = default;
+    ~NoCopy() = default;
 
-	NoCopy(const NoCopy& rhs) = delete;
-	NoCopy& operator=(const NoCopy& rhs) = delete;
+    NoCopy(const NoCopy& rhs)            = delete;
+    NoCopy& operator=(const NoCopy& rhs) = delete;
 };
 
 struct NoMove {
-  protected:
-	NoMove()  = default;
-	~NoMove() = default;
+protected:
+    NoMove()  = default;
+    ~NoMove() = default;
 
-	NoMove(NoMove&& rhs) = delete;
-	NoMove& operator=(NoMove&& rhs) = delete;
+    NoMove(NoMove&& rhs)            = delete;
+    NoMove& operator=(NoMove&& rhs) = delete;
 };

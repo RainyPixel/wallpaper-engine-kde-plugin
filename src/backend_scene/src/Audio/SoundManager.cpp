@@ -39,9 +39,9 @@ private:
 struct BStreamWrapper {
     std::shared_ptr<wallpaper::fs::IBinaryStream> stream;
     size_t                                        Read(void* pBufferOut, size_t bytesToRead) {
-                                               size_t reads = stream->Read(pBufferOut, bytesToRead);
-                                               // LOG_INFO("r:%u, %u",bytesToRead, reads);
-                                               return reads;
+        size_t reads = stream->Read(pBufferOut, bytesToRead);
+        // LOG_INFO("r:%u, %u",bytesToRead, reads);
+        return reads;
     }
     bool Seek(idx offset, ma_seek_origin origin) {
         bool result { false };

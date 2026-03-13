@@ -7,7 +7,7 @@
 #if 1
 
 #    undef __SHORT_FILE__
-#    define __SHORT_FILE__   past_last_slash(__FILE__)
+#    define __SHORT_FILE__ past_last_slash(__FILE__)
 /*
         ({                                                       \
             constexpr const char* p = past_last_slash(__FILE__); \

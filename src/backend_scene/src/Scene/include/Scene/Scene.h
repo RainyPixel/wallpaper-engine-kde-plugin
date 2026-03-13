@@ -51,8 +51,8 @@ public:
 
     double elapsingTime { 0.0f }, frameTime { 0.0f };
     void   PassFrameTime(double t) {
-          frameTime = t;
-          elapsingTime += t;
+        frameTime = t;
+        elapsingTime += t;
     }
 
     void UpdateLinkedCamera(const std::string& name) {

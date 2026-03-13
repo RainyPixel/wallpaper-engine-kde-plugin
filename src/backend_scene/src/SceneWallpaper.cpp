@@ -26,10 +26,8 @@
 
 using namespace wallpaper;
 
-#define CASE_CMD(cmd)      \
-    case CMD::CMD_##cmd:   \
-        handle_##cmd(msg); \
-        break;
+#define CASE_CMD(cmd) \
+    case CMD::CMD_##cmd: handle_##cmd(msg); break;
 #define MHANDLER_CMD(cmd) void handle_##cmd(const std::shared_ptr<looper::Message>& msg)
 #define MHANDLER_CMD_IMPL(cl, cmd) \
     void impl_##cl::handle_##cmd(const std::shared_ptr<looper::Message>& msg)
@@ -378,7 +376,7 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
                 m_user_props_json = json;
                 // Reload scene to apply new user properties (only if we have actual properties)
                 // Skip reload if json is empty - this means wallpaper is changing
-                if (!json.empty() && !m_source.empty() && !m_assets.empty()) {
+                if (! json.empty() && ! m_source.empty() && ! m_assets.empty()) {
                     LOG_INFO("Reloading scene to apply user properties: %s", json.c_str());
                     CALL_MHANDLER_CMD(LOAD_SCENE, msg);
                 }

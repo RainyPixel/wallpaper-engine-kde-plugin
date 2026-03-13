@@ -46,7 +46,8 @@ public:
     GraphicsPipeline& setRenderPass(vvk::RenderPass);
     GraphicsPipeline& addDescriptorSetInfo(std::span<const DescriptorSetInfo>);
     GraphicsPipeline& addStage(Uni_ShaderSpv&&);
-    GraphicsPipeline& addInputAttributeDescription(std::span<const VkVertexInputAttributeDescription>);
+    GraphicsPipeline&
+        addInputAttributeDescription(std::span<const VkVertexInputAttributeDescription>);
     GraphicsPipeline& addInputBindingDescription(std::span<const VkVertexInputBindingDescription>);
     GraphicsPipeline& setTopology(VkPrimitiveTopology);
 

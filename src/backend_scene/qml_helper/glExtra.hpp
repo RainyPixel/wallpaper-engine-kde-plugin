@@ -18,7 +18,7 @@ public:
     void deleteTexture(uint);
 
     std::span<const std::uint8_t> uuid() const;
-    wallpaper::TexTiling     tiling() const;
+    wallpaper::TexTiling          tiling() const;
 
 private:
     class impl;

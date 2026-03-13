@@ -408,13 +408,15 @@ inline std::string FixImplicitConversions(const std::string& src) {
     // NOTE: must run before fixTrunc so that upgraded variables are not incorrectly
     // truncated (e.g. a vec2 upgraded to vec4 must not have its assignments cut to .xy).
     {
-        auto upgradeIfOutOfRange = [&result](const char* small_type, const char* big_type,
+        auto upgradeIfOutOfRange = [&result](const char* small_type,
+                                             const char* big_type,
                                              const char* oob_pattern,
                                              const char* bare_swizzle) {
             std::vector<std::string> to_upgrade;
             std::regex               re_decl(std::string(R"(\b)") + small_type + R"(\s+(\w+)\s*;)");
             for (auto it = std::sregex_iterator(result.begin(), result.end(), re_decl);
-                 it != std::sregex_iterator(); ++it) {
+                 it != std::sregex_iterator();
+                 ++it) {
                 std::string name = (*it)[1].str();
                 if (std::regex_search(result, std::regex(R"(\b)" + name + oob_pattern)))
                     to_upgrade.push_back(std::move(name));
@@ -459,13 +461,13 @@ inline std::string FixImplicitConversions(const std::string& src) {
 
         auto fixTrunc = [&result](const std::set<std::string>& dst,
                                   const std::set<std::string>& src,
-                                  const char*                   swizzle) {
+                                  const char*                  swizzle) {
             for (const auto& d : dst) {
                 for (const auto& s : src) {
                     if (d == s) continue;
                     std::regex re("\\b(" + d + ")\\s*=\\s*(" + s + ")\\s*;");
-                    result = std::regex_replace(result, re,
-                                                "$1 = $2." + std::string(swizzle) + ";");
+                    result =
+                        std::regex_replace(result, re, "$1 = $2." + std::string(swizzle) + ";");
                 }
             }
         };
@@ -481,10 +483,9 @@ inline std::string FixImplicitConversions(const std::string& src) {
     // Wrapping an already-vecN arg in vecN() is a safe copy-constructor identity.
     // Only handles one level of nesting inside each pow argument (sufficient in practice).
     {
-        std::regex re(
-            R"(\b(vec[234])\s*\(\s*pow\s*\()"
-            R"(([^(),]*(?:\([^)]*\)[^(),]*)*),\s*)"
-            R"(([^()]*(?:\([^)]*\)[^()]*)*)\)\s*\))");
+        std::regex re(R"(\b(vec[234])\s*\(\s*pow\s*\()"
+                      R"(([^(),]*(?:\([^)]*\)[^(),]*)*),\s*)"
+                      R"(([^()]*(?:\([^)]*\)[^()]*)*)\)\s*\))");
         result = std::regex_replace(result, re, "pow($1($2), $1($3))");
     }
 
@@ -593,7 +594,8 @@ void WPShaderParser::FinalGlslang() { glslang::FinalizeProcess(); }
 
 bool WPShaderParser::CompileToSpv(std::string_view scene_id, std::span<WPShaderUnit> units,
                                   std::vector<ShaderCode>& codes, fs::VFS& vfs,
-                                  WPShaderInfo* shader_info, std::span<const WPShaderTexInfo> texs) {
+                                  WPShaderInfo*                    shader_info,
+                                  std::span<const WPShaderTexInfo> texs) {
     (void)texs;
 
     std::for_each(units.begin(), units.end(), [shader_info](auto& unit) {

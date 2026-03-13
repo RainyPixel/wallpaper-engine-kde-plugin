@@ -13,8 +13,8 @@ constexpr std::string_view OPT_RESOLUTION  = "--resolution";
 constexpr std::string_view OPT_CACHE_PATH  = "--cache-path";
 
 struct Resolution {
-	uint w;
-	uint h;
+    uint w;
+    uint h;
 };
 std::ostream& operator<<(std::ostream& os, const Resolution& res) {
     return os << res.w << 'x' << res.h;
@@ -52,21 +52,21 @@ void setAndParseArg(argparse::ArgumentParser& arg, int argc, char** argv) {
 
     arg.add_argument("-R", OPT_RESOLUTION)
         .help("Set the resolution, eg. 1920x1080")
-        .default_value(Resolution{1280, 720})
+        .default_value(Resolution { 1280, 720 })
         .implicit_value(true)
         .nargs(1)
         .append()
-		.action([](const std::string& value) {
-			const std::regex re_res(R"(([0-9]+)x([0-9]+))");
-			std::smatch match;
-			uint width = 1280, height = 720;
-			if(std::regex_match(value, match, re_res)) {
-				const std::string w_str = match[1].str(), h_str = match[2].str();
-				std::from_chars(w_str.c_str(), w_str.c_str() + w_str.length(), width);
-				std::from_chars(h_str.c_str(), h_str.c_str() + h_str.length(), height);
-			}
-			return Resolution{width, height};
-		});
+        .action([](const std::string& value) {
+            const std::regex re_res(R"(([0-9]+)x([0-9]+))");
+            std::smatch      match;
+            uint             width = 1280, height = 720;
+            if (std::regex_match(value, match, re_res)) {
+                const std::string w_str = match[1].str(), h_str = match[2].str();
+                std::from_chars(w_str.c_str(), w_str.c_str() + w_str.length(), width);
+                std::from_chars(h_str.c_str(), h_str.c_str() + h_str.length(), height);
+            }
+            return Resolution { width, height };
+        });
 
     try {
         arg.parse_args(argc, argv);

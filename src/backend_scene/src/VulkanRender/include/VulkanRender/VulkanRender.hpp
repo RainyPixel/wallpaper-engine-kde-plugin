@@ -32,7 +32,7 @@ public:
     void UpdateCameraFillMode(Scene&, wallpaper::FillMode);
 
     ExSwapchain* exSwapchain() const;
-    bool inited() const;
+    bool         inited() const;
 
 private:
     struct Impl;

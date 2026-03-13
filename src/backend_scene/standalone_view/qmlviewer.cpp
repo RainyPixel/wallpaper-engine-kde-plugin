@@ -18,13 +18,13 @@ int main(int argc, char** argv) {
 
     qmlRegisterType<scenebackend::SceneObject>("scenetest", 1, 0, "SceneViewer");
     QQuickView view;
-	{
-		auto [w_width, w_height] = program.get<Resolution>(OPT_RESOLUTION);
-		view.setWidth(w_width);
-		view.setHeight(w_height);
-		view.setResizeMode(QQuickView::SizeRootObjectToView);
-		view.setSource(QUrl("qrc:///pkg/main.qml"));
-	}
+    {
+        auto [w_width, w_height] = program.get<Resolution>(OPT_RESOLUTION);
+        view.setWidth(w_width);
+        view.setHeight(w_height);
+        view.setResizeMode(QQuickView::SizeRootObjectToView);
+        view.setSource(QUrl("qrc:///pkg/main.qml"));
+    }
 
     QObject*                   obj = view.rootObject();
     scenebackend::SceneObject* sv  = obj->findChild<scenebackend::SceneObject*>();

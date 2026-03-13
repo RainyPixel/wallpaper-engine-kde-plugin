@@ -31,5 +31,5 @@ private:
     Desc m_desc;
 };
 
-}
-}
+} // namespace vulkan
+} // namespace wallpaper

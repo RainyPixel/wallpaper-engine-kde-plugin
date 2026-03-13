@@ -591,8 +591,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
         if (! WPMdlParser::Parse(wpimgobj.puppet, vfs, *puppet)) {
             LOG_ERROR("parse puppet failed: %s", wpimgobj.puppet.c_str());
             puppet = nullptr;
-        }
-        else if (puppet->puppet->bones.size() == 0){
+        } else if (puppet->puppet->bones.size() == 0) {
             LOG_ERROR("puppet has no bones: %s", wpimgobj.puppet.c_str());
             puppet = nullptr;
         }
@@ -619,11 +618,8 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             }
         }
 
-        baseConstSvs["g_Color4"]     = std::array<float, 4> {
-            wpimgobj.color[0],
-            wpimgobj.color[1],
-            wpimgobj.color[2],
-            wpimgobj.alpha
+        baseConstSvs["g_Color4"] = std::array<float, 4> {
+            wpimgobj.color[0], wpimgobj.color[1], wpimgobj.color[2], wpimgobj.alpha
         };
         baseConstSvs["g_UserAlpha"]  = wpimgobj.alpha;
         baseConstSvs["g_Brightness"] = wpimgobj.brightness;
@@ -637,7 +633,8 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
                            &material,
                            &svData,
                            &shaderInfo)) {
-            LOG_ERROR("load imageobj id=%d '%s' material failed", wpimgobj.id, wpimgobj.name.c_str());
+            LOG_ERROR(
+                "load imageobj id=%d '%s' material failed", wpimgobj.id, wpimgobj.name.c_str());
             return;
         };
         LoadConstvalue(material, wpimgobj.material, shaderInfo);
@@ -912,7 +909,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
     // Invisible nodes without effects still need an offscreen RT so their output
     // can be referenced via link tex by compose layers.
     if (isOffscreen && ! hasEffect) {
-        auto& scene = *context.scene;
+        auto& scene                                      = *context.scene;
         scene.renderTargets[GenOffscreenRT(wpimgobj.id)] = {
             .width      = (uint16_t)wpimgobj.size[0],
             .height     = (uint16_t)wpimgobj.size[1],
@@ -1032,8 +1029,7 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
                               &svData,
                               &shaderInfo);
     } catch (const std::exception& e) {
-        LOG_ERROR("load particleobj '%s' material exception: %s",
-                  wppartobj.name.c_str(), e.what());
+        LOG_ERROR("load particleobj '%s' material exception: %s", wppartobj.name.c_str(), e.what());
     }
     if (! mat_ok) {
         LOG_ERROR("load particleobj '%s' material faild", wppartobj.name.c_str());
@@ -1150,7 +1146,7 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
     }
 
     // Apply user overrides if provided
-    if (!userPropsOverride.empty()) {
+    if (! userPropsOverride.empty()) {
         LOG_INFO("Applying user properties override: %s", userPropsOverride.c_str());
         userProps.ApplyOverrides(userPropsOverride);
     }
@@ -1222,8 +1218,8 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
 
     for (WPObjectVar& obj : wp_objs) {
         std::visit(visitor::overload {
-                       [&context](wpscene::WPImageObject& obj) {                           
-                            ParseImageObj(context, obj);
+                       [&context](wpscene::WPImageObject& obj) {
+                           ParseImageObj(context, obj);
                        },
                        [&context](wpscene::WPParticleObject& obj) {
                            ParseParticleObj(context, obj);

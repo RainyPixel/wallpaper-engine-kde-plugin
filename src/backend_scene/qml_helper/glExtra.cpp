@@ -77,7 +77,8 @@ bool GlExtra::init(void* get_proc_address(const char*)) {
         bool is_low_gl = ! GLAD_GL_VERSION_4_2 && ! GLAD_GL_ES_VERSION_3_0;
         if (is_low_gl) {
             LOG_INFO("gl: Context is GL %d.%d, attempting shared GL 4.2 context",
-                     GLVersion.major, GLVersion.minor);
+                     GLVersion.major,
+                     GLVersion.minor);
 
             // Try to create a shared GL 4.2+ context for external memory operations
             QOpenGLContext* current = QOpenGLContext::currentContext();
@@ -91,7 +92,8 @@ bool GlExtra::init(void* get_proc_address(const char*)) {
                 if (ctx->create()) {
                     auto actual = ctx->format();
                     LOG_INFO("gl: Shared context created: GL %d.%d",
-                             actual.majorVersion(), actual.minorVersion());
+                             actual.majorVersion(),
+                             actual.minorVersion());
 
                     auto* surface = new QOffscreenSurface();
                     surface->setFormat(actual);
@@ -101,11 +103,12 @@ bool GlExtra::init(void* get_proc_address(const char*)) {
                     if (ctx->makeCurrent(surface)) {
                         if (gladLoadGLLoader((GLADloadproc)get_proc_address)) {
                             LOG_INFO("gl: GLAD reloaded with GL %d.%d",
-                                     GLVersion.major, GLVersion.minor);
-                            m_shared_ctx    = ctx;
-                            m_surface       = surface;
+                                     GLVersion.major,
+                                     GLVersion.minor);
+                            m_shared_ctx     = ctx;
+                            m_surface        = surface;
                             m_use_shared_ctx = true;
-                            is_low_gl       = false;
+                            is_low_gl        = false;
                         } else {
                             LOG_ERROR("gl: Failed to reload GLAD on shared context");
                         }

@@ -9,7 +9,9 @@ using namespace wallpaper::vulkan;
 #define CHECK_REF(ref, act)                                                  \
     if (! ref) {                                                             \
         LOG_ERROR("stage ref not available, index %d", ref.m_virtual_index); \
-        { act; }                                                             \
+        {                                                                    \
+            act;                                                             \
+        }                                                                    \
     }
 
 StagingBuffer::StagingBuffer(const Device& d, VkDeviceSize size, VkBufferUsageFlags usage)

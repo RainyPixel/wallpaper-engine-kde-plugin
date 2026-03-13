@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            liblz4-dev \
+            libeigen3-dev \
+            libgl-dev \
+            libglvnd-dev \
+            libvulkan-dev
+
+      - name: Configure CMake
+        run: cmake -B build -DBUILD_TESTS=ON
+
+      - name: Build tests
+        run: cmake --build build --target backend_scene_tests -j$(nproc)
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure

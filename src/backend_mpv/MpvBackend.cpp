@@ -300,6 +300,7 @@ MpvObject::MpvObject(QQuickItem* parent)
     mpv_set_option_string(m_mpv, "config", "no");
     mpv_set_option_string(m_mpv, "vo", "libmpv");
     mpv_set_option_string(m_mpv, "hwdec", m_hwdec.toUtf8().constData());
+    mpv_set_option_string(m_mpv, "vf", "vflip");
     mpv_set_option_string(m_mpv, "loop", "inf");
 
     if (mpv_initialize(m_mpv) < 0) {

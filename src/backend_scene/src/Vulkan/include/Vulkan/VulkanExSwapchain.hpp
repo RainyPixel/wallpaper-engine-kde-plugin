@@ -76,8 +76,7 @@ inline std::unique_ptr<VulkanExSwapchain> CreateExSwapchain(TextureCache& rt_poo
                                                             VkImageTiling tiling) {
     std::array<VulkanExHandle, 3> handles;
     for (auto& handle : handles) {
-        if (auto rv = rt_pool.CreateExTex(w, h, VK_FORMAT_R8G8B8A8_UNORM, tiling);
-            rv.has_value())
+        if (auto rv = rt_pool.CreateExTex(w, h, VK_FORMAT_R8G8B8A8_UNORM, tiling); rv.has_value())
             handle.image = std::move(rv.value());
         else
             return nullptr;

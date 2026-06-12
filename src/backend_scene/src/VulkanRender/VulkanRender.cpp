@@ -289,7 +289,11 @@ void VulkanRender::Impl::DestroyRenderingResource(RenderingResources& rr) {}
 void VulkanRender::Impl::drawFrame(Scene& scene) {
     if (! (m_inited && m_pass_loaded)) return;
 
-        // LOG_INFO("used ram: %fm", (m_device->GetUsage()/1024.0f)/1024.0f);
+    if (std::getenv("WP_VMA_LOG")) {
+        static int s_vma_frame = 0;
+        if ((s_vma_frame++ % 120) == 0)
+            LOG_INFO("VMA device-local usage: %.1f MiB", (m_device->GetUsage() / 1024.0) / 1024.0);
+    }
 
 #if ENABLE_RENDERDOC_API
     if (rdoc_api)

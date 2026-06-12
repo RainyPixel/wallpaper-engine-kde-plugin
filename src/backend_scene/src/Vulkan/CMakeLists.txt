@@ -6,6 +6,7 @@ add_library(${LIB_NAME}
 STATIC
 Instance.cpp
 Device.cpp
+SharedGpuContext.cpp
 GraphicsPipeline.cpp
 Shader.cpp
 StagingBuffer.cpp

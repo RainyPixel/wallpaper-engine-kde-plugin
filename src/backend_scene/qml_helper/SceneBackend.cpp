@@ -150,13 +150,11 @@ public slots:
                         exh->height,
                         exh->fd);
                 ExTex ex_tex;
-                int   fd    = exh->fd;
                 uint  gltex = m_glex.genExTexture(*exh);
 
                 ex_tex.gltex = gltex;
                 ex_tex.qsg   = createTextureFromGl(gltex, QSize(exh->width, exh->height), m_window);
                 texs_map[id] = ex_tex;
-                close(fd);
             }
             auto& newtex = texs_map.at(id);
             if (newtex.qsg != nullptr)

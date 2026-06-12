@@ -1,5 +1,7 @@
 #include "Parameters.hpp"
 
+#include <unistd.h>
+
 namespace wallpaper
 {
 namespace vulkan
@@ -32,8 +34,10 @@ VmaImageParameters& VmaImageParameters::operator=(VmaImageParameters&& o) noexce
     return *this;
 }
 
-ExImageParameters::ExImageParameters()  = default;
-ExImageParameters::~ExImageParameters() = default;
+ExImageParameters::ExImageParameters() = default;
+ExImageParameters::~ExImageParameters() {
+    if (fd > 0) ::close(fd);
+}
 ExImageParameters::ExImageParameters(ExImageParameters&& o) noexcept
     : mem(std::move(o.mem)),
       mem_reqs(o.mem_reqs),

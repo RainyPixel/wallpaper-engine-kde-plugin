@@ -26,6 +26,7 @@
 #include <cassert>
 #include <vector>
 #include <cstdint>
+#include <atomic>
 
 #if ENABLE_RENDERDOC_API
 #    include "RenderDoc.h"
@@ -73,6 +74,11 @@ struct VulkanRender::Impl {
 
     Instance& instance() { return m_gpu->instance(); }
     Device&   device() { return m_gpu->device(); }
+
+    // Per-screen render-target pool, output extent and asset-cache token.
+    std::unique_ptr<TextureCache> m_rt_pool;
+    VkExtent2D                    m_out_extent { 1, 1 };
+    ScreenToken                   m_token { 0 };
 
     std::unique_ptr<PrePass> m_prepass { nullptr };
     std::unique_ptr<FinPass> m_finpass { nullptr };
@@ -165,8 +171,13 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
         return false;
     }
 
+    static std::atomic<ScreenToken> s_next_token { 1 };
+    m_token      = s_next_token++;
+    m_out_extent = extent;
+    m_rt_pool    = std::make_unique<TextureCache>(device());
+
     if (info.offscreen) {
-        m_ex_swapchain = CreateExSwapchain(device(),
+        m_ex_swapchain = CreateExSwapchain(*m_rt_pool,
                                            extent.width,
                                            extent.height,
                                            (info.offscreen_tiling == TexTiling::OPTIMAL
@@ -243,10 +254,15 @@ void VulkanRender::Impl::destroy() {
         }
         m_vertex_buf->destroy();
         m_dyn_buf->destroy();
+
+        // Free this screen's GPU resources while the (possibly shared) device is
+        // still alive, then drop the asset references it held.
+        m_ex_swapchain.reset();
+        m_rt_pool.reset();
+        device().asset_cache().ReleaseScreen(m_token);
     }
-    // Release this screen's hold on the shared context; the instance/device tear
-    // down once the last screen drops it.
-    m_gpu.reset();
+    // The shared context tears the instance/device down once the last screen
+    // releases it; member destruction order keeps m_gpu alive until then.
 }
 
 bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
@@ -268,8 +284,10 @@ bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
         VVK_CHECK_BOOL_RE(device().handle().CreateSemaphore(ci, rr.sem_swap_wait_image));
     }
 
-    rr.vertex_buf = m_vertex_buf.get();
-    rr.dyn_buf    = m_dyn_buf.get();
+    rr.vertex_buf   = m_vertex_buf.get();
+    rr.dyn_buf      = m_dyn_buf.get();
+    rr.rt_pool      = m_rt_pool.get();
+    rr.screen_token = m_token;
     return true;
 }
 
@@ -400,7 +418,7 @@ void VulkanRender::Impl::drawFrameOffscreen() {
 }
 
 void VulkanRender::Impl::setRenderTargetSize(Scene& scene, rg::RenderGraph& rg) {
-    auto& ext = device().out_extent();
+    auto& ext = m_out_extent;
     for (auto& item : scene.renderTargets) {
         auto& rt = item.second;
         if (rt.bind.enable && rt.bind.screen) {
@@ -436,8 +454,8 @@ void VulkanRender::Impl::setRenderTargetSize(Scene& scene, rg::RenderGraph& rg) 
 void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
                                               wallpaper::FillMode fillmode) {
     using namespace wallpaper;
-    auto width  = device().out_extent().width;
-    auto height = device().out_extent().height;
+    auto width  = m_out_extent.width;
+    auto height = m_out_extent.height;
 
     if (width == 0) return;
     double sw = scene.ortho[0], sh = scene.ortho[1];
@@ -488,7 +506,10 @@ void VulkanRender::Impl::clearLastRenderGraph() {
         p->destory(device(), m_rendering_resources);
     }
     m_passes.clear();
-    device().tex_cache().Clear();
+    // Drop only this screen's render targets and asset references; textures that
+    // other screens still hold survive.
+    m_rt_pool->Clear();
+    device().asset_cache().ReleaseScreen(m_token);
 
     m_vertex_buf->destroy();
     m_dyn_buf->destroy();

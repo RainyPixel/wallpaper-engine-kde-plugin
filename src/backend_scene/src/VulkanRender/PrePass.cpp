@@ -20,12 +20,12 @@ TextureKey ToTexKey(wallpaper::SceneRenderTarget rt) {
 }
 } // namespace
 
-void PrePass::prepare(Scene& scene, const Device& device, RenderingResources&) {
+void PrePass::prepare(Scene& scene, const Device& device, RenderingResources& rr) {
     {
         auto tex_name = std::string(m_desc.result);
         if (scene.renderTargets.count(tex_name) == 0) return;
         auto& rt = scene.renderTargets.at(tex_name);
-        if (auto opt = device.tex_cache().Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
+        if (auto opt = rr.rt_pool->Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
             opt.has_value()) {
             m_desc.vk_result = opt.value();
         } else

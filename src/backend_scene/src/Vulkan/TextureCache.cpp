@@ -417,9 +417,33 @@ std::optional<ExImageParameters> TextureCache::CreateExTex(uint32_t width, uint3
     return opt;
 }
 
-ImageSlotsRef TextureCache::CreateTex(Image& image) {
+AssetCache::AssetCache(const Device& device): m_device(device) {}
+AssetCache::~AssetCache() {}
+
+void AssetCache::allocateCmd() {
+    const auto& pool = m_device.cmd_pool();
+    VVK_CHECK(pool.Allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_tex_cmds));
+    m_tex_cmd = vvk::CommandBuffer(m_tex_cmds[0], m_device.handle().Dispatch());
+}
+
+void AssetCache::ReleaseScreen(ScreenToken who) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    for (auto it = m_tex_map.begin(); it != m_tex_map.end();) {
+        it->second.holders.erase(who);
+        if (it->second.holders.empty())
+            it = m_tex_map.erase(it);
+        else
+            ++it;
+    }
+}
+
+ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+
     if (exists(m_tex_map, image.key)) {
-        return m_tex_map.at(image.key);
+        auto& entry = m_tex_map.at(image.key);
+        entry.holders.insert(who);
+        return entry.slots;
     }
 
     ImageSlots img_slots;
@@ -497,8 +521,10 @@ ImageSlotsRef TextureCache::CreateTex(Image& image) {
 
         m_device.handle().WaitIdle();
     }
-    m_tex_map[image.key] = std::move(img_slots);
-    return m_tex_map[image.key];
+    auto& entry = m_tex_map[image.key];
+    entry.slots = std::move(img_slots);
+    entry.holders.insert(who);
+    return entry.slots;
 }
 
 void TextureCache::allocateCmd() {
@@ -544,7 +570,6 @@ TextureCache::TextureCache(const Device& device): m_device(device) {}
 TextureCache::~TextureCache() {};
 
 void TextureCache::Clear() {
-    m_tex_map.clear();
     m_query_texs.clear();
     m_query_map.clear();
 }

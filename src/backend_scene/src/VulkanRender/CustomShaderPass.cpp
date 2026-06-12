@@ -111,13 +111,13 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         if (IsSpecTex(tex_name)) {
             if (scene.renderTargets.count(tex_name) == 0) continue;
             auto& rt  = scene.renderTargets.at(tex_name);
-            auto  opt = device.tex_cache().Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
+            auto  opt = rr.rt_pool->Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
             if (! opt.has_value()) continue;
             img_slots.slots = { opt.value() };
         } else {
             auto image = scene.imageParser->Parse(tex_name);
             if (image) {
-                img_slots = device.tex_cache().CreateTex(*image);
+                img_slots = device.asset_cache().CreateTexShared(*image, rr.screen_token);
             } else {
                 LOG_ERROR("parse tex \"%s\" failed", tex_name.c_str());
             }
@@ -205,7 +205,7 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         // pin the output when caching so the pooled texture is never recycled
         // and keeps holding the cached result (in SHADER_READ_ONLY) across frames
         bool persist = m_frame_static || ! rt.allowReuse;
-        if (auto opt = device.tex_cache().Query(tex_name, ToTexKey(rt), persist); opt.has_value()) {
+        if (auto opt = rr.rt_pool->Query(tex_name, ToTexKey(rt), persist); opt.has_value()) {
             m_desc.vk_output = opt.value();
         } else
             return;
@@ -418,7 +418,7 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         };
     }
     for (auto& tex : releaseTexs()) {
-        device.tex_cache().MarkShareReady(tex);
+        rr.rt_pool->MarkShareReady(tex);
     }
     setPrepared();
 }

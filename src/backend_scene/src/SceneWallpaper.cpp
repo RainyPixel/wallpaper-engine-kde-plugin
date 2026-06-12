@@ -89,6 +89,7 @@ public:
     void sendCmdLoadScene();
     void sendFirstFrameOk();
     bool isGenGraphviz() const { return m_gen_graphviz; }
+    bool cachePasses() const { return m_cache_passes; }
 
 private:
     void loadScene();
@@ -105,6 +106,7 @@ private:
     std::string m_source;
     std::string m_cache_path;
     bool        m_gen_graphviz { false };
+    bool        m_cache_passes { true };
 
     WPSceneParser                        m_scene_parser;
     std::unique_ptr<audio::SoundManager> m_sound_manager;
@@ -215,6 +217,7 @@ private:
     }
     MHANDLER_CMD(SET_SCENE) {
         if (msg->findObject("scene", &m_scene)) {
+            m_scene->cache_passes = main_handler.cachePasses();
             if (m_rg) m_render->clearLastRenderGraph();
             m_rg = sceneToRenderGraph(*m_scene);
 
@@ -378,6 +381,16 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
                 // Skip reload if json is empty - this means wallpaper is changing
                 if (! json.empty() && ! m_source.empty() && ! m_assets.empty()) {
                     LOG_INFO("Reloading scene to apply user properties: %s", json.c_str());
+                    CALL_MHANDLER_CMD(LOAD_SCENE, msg);
+                }
+            }
+        } else if (property == PROPERTY_CACHE_PASSES) {
+            bool value { true };
+            msg->findBool("value", &value);
+            if (m_cache_passes != value) {
+                m_cache_passes = value;
+                // rebuild the render graph so the new setting takes effect live
+                if (! m_source.empty() && ! m_assets.empty()) {
                     CALL_MHANDLER_CMD(LOAD_SCENE, msg);
                 }
             }

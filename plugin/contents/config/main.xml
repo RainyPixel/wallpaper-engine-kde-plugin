@@ -74,6 +74,10 @@
       <label>Share one configuration across all screens</label>
       <default>false</default>
     </entry>
+    <entry name="SceneCachePasses" type="Bool">
+      <label>Cache static layers of scene wallpapers</label>
+      <default>true</default>
+    </entry>
     <entry name="MpvStats" type="Bool">
       <label>Mpv Stats</label>
       <default>false</default>

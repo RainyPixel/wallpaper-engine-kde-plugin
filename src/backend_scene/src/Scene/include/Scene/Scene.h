@@ -26,6 +26,12 @@ public:
     std::unordered_map<std::string, SceneTexture>      textures;
     std::unordered_map<std::string, SceneRenderTarget> renderTargets;
 
+    // static-pass caching: whether a render target is written only by passes
+    // whose output never changes after the first frame. Filled during prepare
+    // (topological order). cache_passes gates the whole optimization.
+    bool                                  cache_passes { true };
+    std::unordered_map<std::string, bool> rt_frame_static;
+
     std::unordered_map<std::string, std::shared_ptr<SceneCamera>> cameras;
     std::unordered_map<std::string, std::vector<std::string>>     linkedCameras;
 

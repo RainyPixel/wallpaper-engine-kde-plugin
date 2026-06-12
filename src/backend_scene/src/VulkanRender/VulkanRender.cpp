@@ -7,6 +7,7 @@
 
 #include "Utils/Algorism.h"
 
+#include <cstdlib>
 #include <glslang/Public/ShaderLang.h>
 
 #include "Vulkan/Device.hpp"
@@ -504,6 +505,10 @@ void VulkanRender::Impl::clearLastRenderGraph() {
 void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
     if (! m_inited) return;
     m_pass_loaded = false;
+
+    // static-pass caching is recomputed per graph build; env var force-disables it
+    scene.rt_frame_static.clear();
+    if (std::getenv("WP_NO_PASS_CACHE") != nullptr) scene.cache_passes = false;
 
     auto nodes             = rg.topologicalOrder();
     auto node_release_texs = rg.getLastReadTexs(nodes);

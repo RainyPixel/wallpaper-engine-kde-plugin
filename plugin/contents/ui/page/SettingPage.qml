@@ -25,6 +25,7 @@ Flickable {
     property alias cfg_Fps: sliderFps.value
     property alias cfg_Volume: sliderVol.value
     property alias cfg_MpvStats: ckbox_mpvStats.checked
+    property alias cfg_SceneCachePasses: ckbox_cacheScenePasses.checked
     property string cfg_MpvHwdec
     property alias cfg_Speed: spin_speed.dValue
     property alias cfg_MuteAudio: ckbox_muteAudio.checked
@@ -423,6 +424,23 @@ Flickable {
                     }
                 }
 
+            }
+            OptionItem {
+                text: 'Cache static layers'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/tuning.svg'
+                actor: Switch {
+                    id: ckbox_cacheScenePasses
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        text: "Render unchanging layers (e.g. blurred backgrounds) once instead of "
+                            + "every frame. Saves CPU/GPU. Disable if a wallpaper looks wrong."
+                    }
+                }
             }
             OptionItem {
                 text: 'Shader cache'

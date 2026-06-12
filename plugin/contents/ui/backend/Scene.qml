@@ -43,6 +43,7 @@ Item{
         anchors.fill: parent
         fps: background.fps
         muted: background.mute
+        cachePasses: background.cacheScenePasses
         speed: background.speed
         assets: sceneItem.assets
         userProperties: sceneItem.userPropsJson

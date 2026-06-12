@@ -294,6 +294,13 @@ void SceneObject::setMuted(bool value) {
     SET_PROPERTY(Bool, wallpaper::PROPERTY_MUTED, value);
 }
 
+bool SceneObject::cachePasses() const { return m_cachePasses; }
+void SceneObject::setCachePasses(bool value) {
+    if (m_cachePasses == value) return;
+    m_cachePasses = value;
+    SET_PROPERTY(Bool, wallpaper::PROPERTY_CACHE_PASSES, value);
+}
+
 QString SceneObject::userProperties() const { return m_userProperties; }
 
 void SceneObject::setUserProperties(const QString& value) {

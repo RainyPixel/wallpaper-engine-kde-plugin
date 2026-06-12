@@ -22,6 +22,7 @@ class SceneObject : public QQuickItem {
     Q_PROPERTY(float speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(float volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted)
+    Q_PROPERTY(bool cachePasses READ cachePasses WRITE setCachePasses)
     Q_PROPERTY(QString userProperties READ userProperties WRITE setUserProperties NOTIFY
                    userPropertiesChanged)
 public:
@@ -46,6 +47,7 @@ public:
     float   speed() const;
     float   volume() const;
     bool    muted() const;
+    bool    cachePasses() const;
     QString userProperties() const;
 
     void setFps(int);
@@ -53,6 +55,7 @@ public:
     void setSpeed(float);
     void setVolume(float);
     void setMuted(bool);
+    void setCachePasses(bool);
     void setUserProperties(const QString&);
 
     // debug
@@ -91,6 +94,7 @@ private:
     float   m_speed { 1.0f };
     float   m_volume { 1.0f };
     bool    m_muted { false };
+    bool    m_cachePasses { true };
     QString m_userProperties;
 
 public:

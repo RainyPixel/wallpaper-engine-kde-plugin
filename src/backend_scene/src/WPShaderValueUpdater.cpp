@@ -68,10 +68,11 @@ void WPShaderValueUpdater::InitUniforms(SceneNode* pNode, const ExistsUniformOp&
     info.has_DAYTIME          = existsOp(G_DAYTIME);
     info.has_POINTERPOSITION  = existsOp(G_POINTERPOSITION);
     info.has_PARALLAXPOSITION = existsOp(G_PARALLAXPOSITION);
-    info.has_TEXELSIZE        = existsOp(G_TEXELSIZE);
-    info.has_TEXELSIZEHALF    = existsOp(G_TEXELSIZEHALF);
-    info.has_SCREEN           = existsOp(G_SCREEN);
-    info.has_LP               = existsOp(G_LP);
+    if (info.has_POINTERPOSITION || info.has_PARALLAXPOSITION) m_pointer_uniform_used = true;
+    info.has_TEXELSIZE     = existsOp(G_TEXELSIZE);
+    info.has_TEXELSIZEHALF = existsOp(G_TEXELSIZEHALF);
+    info.has_SCREEN        = existsOp(G_SCREEN);
+    info.has_LP            = existsOp(G_LP);
 
     std::accumulate(begin(info.texs), end(info.texs), 0, [&existsOp](uint index, auto& value) {
         value.has_resolution = existsOp(WE_GLTEX_RESOLUTION_NAMES[index]);

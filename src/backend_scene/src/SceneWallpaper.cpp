@@ -224,6 +224,16 @@ private:
             if (main_handler.isGenGraphviz()) m_rg->ToGraphviz("graph.dot");
             m_render->compileRenderGraph(*m_scene, *m_rg);
             m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+
+            {
+                auto* wpUpdater =
+                    static_cast<WPShaderValueUpdater*>(m_scene->shaderValueUpdater.get());
+                bool mouse_dep = wpUpdater->MouseDependent();
+                LOG_INFO("scene '%s' mouse_dependent=%d (mirror-%s)",
+                         m_scene->scene_id.c_str(),
+                         (int)mouse_dep,
+                         mouse_dep ? "ineligible" : "eligible");
+            }
         }
     }
     MHANDLER_CMD(SET_SPEED) { msg->findFloat("value", &m_speed); }

@@ -150,16 +150,19 @@ ParticleAnimationMode ToAnimMode(const std::string& str) {
     }
 }
 
-void LoadControlPoint(ParticleSubSystem& pSys, const wpscene::Particle& wp) {
-    std::span<ParticleControlpoint> pcs = pSys.Controlpoints();
-    usize                           s   = std::min(pcs.size(), wp.controlpoints.size());
+bool LoadControlPoint(ParticleSubSystem& pSys, const wpscene::Particle& wp) {
+    std::span<ParticleControlpoint> pcs            = pSys.Controlpoints();
+    usize                           s              = std::min(pcs.size(), wp.controlpoints.size());
+    bool                            any_link_mouse = false;
     for (usize i = 0; i < s; i++) {
         pcs[i].offset = Eigen::Vector3d { array_cast<double>(wp.controlpoints[i].offset).data() };
         pcs[i].link_mouse =
             wp.controlpoints[i].flags[wpscene::ParticleControlpoint::FlagEnum::link_mouse];
         pcs[i].worldspace =
             wp.controlpoints[i].flags[wpscene::ParticleControlpoint::FlagEnum::worldspace];
+        any_link_mouse = any_link_mouse || pcs[i].link_mouse;
     }
+    return any_link_mouse;
 }
 void LoadInitializer(ParticleSubSystem& pSys, const wpscene::Particle& wp,
                      const wpscene::ParticleInstanceoverride& over) {
@@ -1077,7 +1080,8 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     LoadEmitter(*particleSub, particle_obj, override.count, render_rope);
     LoadInitializer(*particleSub, particle_obj, override);
     LoadOperator(*particleSub, particle_obj, override);
-    LoadControlPoint(*particleSub, particle_obj);
+    if (LoadControlPoint(*particleSub, particle_obj))
+        context.shader_updater->SetParticleMouseLinked(true);
 
     mesh.AddMaterial(std::move(material));
     spNode->AddMesh(spMesh);

@@ -79,6 +79,15 @@ public:
 
     void SetScreenSize(i32 w, i32 h) override { m_screen_size = { (float)w, (float)h }; }
 
+    void SetParticleMouseLinked(bool v) { m_particle_mouse_linked = v; }
+
+    // True when the rendered frame depends on cursor position (parallax, pointer
+    // uniforms, or mouse-linked particles), which differs per screen. Such scenes
+    // cannot be mirrored across monitors.
+    bool MouseDependent() const {
+        return m_parallax.enable || m_pointer_uniform_used || m_particle_mouse_linked;
+    }
+
     // Get interpolated mouse position in normalized coordinates (0-1)
     std::array<float, 2> GetMousePosition() const { return m_mousePos; }
 
@@ -87,6 +96,9 @@ private:
     WPCameraParallax     m_parallax;
     double               m_dayTime { 0.0f };
     std::array<float, 2> m_texelSize { 1.0f / 1920.0f, 1.0f / 1080.0f };
+
+    bool m_pointer_uniform_used { false };
+    bool m_particle_mouse_linked { false };
 
     std::array<float, 2> m_mousePos { 0.5f, 0.5f };
     std::array<float, 2> m_mousePosInput { 0.5f, 0.5f };

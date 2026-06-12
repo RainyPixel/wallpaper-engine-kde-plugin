@@ -75,10 +75,12 @@ class TextureNode : public QObject, public QSGSimpleTextureNode {
     Q_OBJECT
 public:
     typedef std::function<QSGTexture*(QQuickWindow*)> EatFrameOp;
-    TextureNode(QQuickWindow* window, sp_scene_t scene, bool valid, EatFrameOp eatFrameOp)
+    TextureNode(QQuickWindow* window, sp_scene_t scene, bool valid, bool share_gpu,
+                EatFrameOp eatFrameOp)
         : m_texture(nullptr),
           m_scene(scene),
           m_enable_valid(valid),
+          m_share_gpu(share_gpu),
           m_eatFrameOp(eatFrameOp),
           m_window(window),
           m_first_frame(false) {
@@ -110,6 +112,7 @@ public:
         wallpaper::RenderInitInfo info;
         info.enable_valid_layer = m_enable_valid;
         info.offscreen          = true;
+        info.share_gpu          = m_share_gpu;
         info.offscreen_tiling   = m_glex.tiling();
         info.uuid               = m_glex.uuid();
         info.width              = w;
@@ -175,6 +178,7 @@ public slots:
 private:
     sp_scene_t m_scene;
     bool       m_enable_valid;
+    bool       m_share_gpu;
 
     QSGTexture*       m_init_texture;
     QSGTexture*       m_texture;
@@ -212,9 +216,10 @@ void SceneObject::resizeFb() {
 QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
     TextureNode* node = static_cast<TextureNode*>(oldNode);
     if (! node) {
-        node = new TextureNode(window(), m_scene, m_enable_valid, [this](QQuickWindow* window) {
-            return (QSGTexture*)nullptr;
-        });
+        node =
+            new TextureNode(window(), m_scene, m_enable_valid, m_share_gpu, [this](QQuickWindow*) {
+                return (QSGTexture*)nullptr;
+            });
         if (node->initGl()) {
             node->initVulkan(width() * window()->devicePixelRatio(),
                              height() * window()->devicePixelRatio());
@@ -299,6 +304,12 @@ void SceneObject::setCachePasses(bool value) {
     if (m_cachePasses == value) return;
     m_cachePasses = value;
     SET_PROPERTY(Bool, wallpaper::PROPERTY_CACHE_PASSES, value);
+}
+
+bool SceneObject::shareGpu() const { return m_share_gpu; }
+void SceneObject::setShareGpu(bool value) {
+    // Consumed when the render node is created; takes effect on next load.
+    m_share_gpu = value;
 }
 
 QString SceneObject::userProperties() const { return m_userProperties; }

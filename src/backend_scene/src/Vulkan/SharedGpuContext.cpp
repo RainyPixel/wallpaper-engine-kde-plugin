@@ -65,16 +65,21 @@ std::shared_ptr<SharedGpuContext> SharedGpuContext::Create(const GpuContextCreat
     return ctx;
 }
 
-bool wallpaper::vulkan::GpuSharingEnabled() {
-    static const bool enabled = std::getenv("WP_SHARE_GPU") != nullptr;
-    return enabled;
+namespace
+{
+bool SharingEnabled(bool requested) {
+    // WP_SHARE_GPU overrides the per-screen setting: "0"/empty forces off,
+    // anything else forces on. Handy as a kill switch and for the viewer.
+    if (const char* e = std::getenv("WP_SHARE_GPU")) return e[0] != '0' && e[0] != '\0';
+    return requested;
 }
+} // namespace
 
 std::shared_ptr<SharedGpuContext>
 wallpaper::vulkan::AcquireGpuContext(const GpuContextCreateInfo& ci) {
     // Surface renderers (the standalone viewer) and the disabled path keep their
     // own private context — never cached, so topology matches the unshared build.
-    if (! ci.offscreen || ! GpuSharingEnabled() || ci.uuid.empty()) {
+    if (! ci.offscreen || ! SharingEnabled(ci.share_enabled) || ci.uuid.empty()) {
         return SharedGpuContext::Create(ci);
     }
 

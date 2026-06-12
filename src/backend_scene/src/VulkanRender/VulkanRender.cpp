@@ -162,6 +162,7 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
         .extent             = extent,
         .uuid               = info.uuid,
         .offscreen          = info.offscreen,
+        .share_enabled      = info.share_gpu,
         .enable_valid_layer = info.enable_valid_layer,
     };
     if (! info.offscreen) ci.create_surface = info.surface_info.createSurfaceOp;

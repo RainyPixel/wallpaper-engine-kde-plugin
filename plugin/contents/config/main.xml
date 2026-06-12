@@ -78,6 +78,10 @@
       <label>Cache static layers of scene wallpapers</label>
       <default>true</default>
     </entry>
+    <entry name="ShareGpuContext" type="Bool">
+      <label>Share one GPU device across screens on the same GPU</label>
+      <default>true</default>
+    </entry>
     <entry name="MpvStats" type="Bool">
       <label>Mpv Stats</label>
       <default>false</default>

@@ -26,6 +26,7 @@ Flickable {
     property alias cfg_Volume: sliderVol.value
     property alias cfg_MpvStats: ckbox_mpvStats.checked
     property alias cfg_SceneCachePasses: ckbox_cacheScenePasses.checked
+    property alias cfg_ShareGpuContext: ckbox_shareGpuContext.checked
     property string cfg_MpvHwdec
     property alias cfg_Speed: spin_speed.dValue
     property alias cfg_MuteAudio: ckbox_muteAudio.checked
@@ -439,6 +440,24 @@ Flickable {
                         color: Kirigami.Theme.disabledTextColor
                         text: "Render unchanging layers (e.g. blurred backgrounds) once instead of "
                             + "every frame. Saves CPU/GPU. Disable if a wallpaper looks wrong."
+                    }
+                }
+            }
+            OptionItem {
+                text: 'Share GPU across screens'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/tuning.svg'
+                actor: Switch {
+                    id: ckbox_shareGpuContext
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        text: "On multi-monitor setups, share one GPU device so identical "
+                            + "textures load once instead of per screen. Saves VRAM. "
+                            + "Takes effect after the wallpaper reloads."
                     }
                 }
             }

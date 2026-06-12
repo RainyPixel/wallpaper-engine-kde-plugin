@@ -141,7 +141,7 @@ public slots:
     void newTexture() {
         if (! m_scene->inited() || m_scene->exSwapchain() == nullptr) return;
 
-        wallpaper::ExHandle* exh = m_scene->exSwapchain()->eatFrame();
+        wallpaper::ExHandle* exh = m_scene->exSwapchain()->eatFrame(m_last_frame_id);
         if (exh != nullptr) {
             int id = exh->id();
             if (texs_map.count(id) == 0) {
@@ -185,6 +185,7 @@ private:
     EatFrameOp        m_eatFrameOp;
     QQuickWindow*     m_window;
     std::atomic<bool> m_first_frame;
+    std::uint64_t     m_last_frame_id { 0 };
 
     GlExtra m_glex;
 

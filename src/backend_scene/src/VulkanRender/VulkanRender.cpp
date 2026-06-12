@@ -75,7 +75,8 @@ struct VulkanRender::Impl {
     Instance& instance() { return m_gpu->instance(); }
     Device&   device() { return m_gpu->device(); }
 
-    // Per-screen render-target pool, output extent and asset-cache token.
+    // Per-screen command pool, render-target pool, output extent and token.
+    vvk::CommandPool              m_cmd_pool;
     std::unique_ptr<TextureCache> m_rt_pool;
     VkExtent2D                    m_out_extent { 1, 1 };
     ScreenToken                   m_token { 0 };
@@ -174,7 +175,17 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
     static std::atomic<ScreenToken> s_next_token { 1 };
     m_token      = s_next_token++;
     m_out_extent = extent;
-    m_rt_pool    = std::make_unique<TextureCache>(device());
+
+    {
+        VkCommandPoolCreateInfo pool_info {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = device().graphics_queue().family_index,
+        };
+        VVK_CHECK_BOOL_RE(device().handle().CreateCommandPool(pool_info, m_cmd_pool));
+    }
+    m_rt_pool = std::make_unique<TextureCache>(device(), m_cmd_pool);
 
     if (info.offscreen) {
         m_ex_swapchain = CreateExSwapchain(*m_rt_pool,
@@ -226,7 +237,7 @@ bool VulkanRender::Impl::initRes() {
     if (! m_vertex_buf->allocate()) return false;
     if (! m_dyn_buf->allocate()) return false;
     {
-        auto& pool = device().cmd_pool();
+        auto& pool = m_cmd_pool;
         VVK_CHECK_BOOL_RE(pool.Allocate(vk_command_num, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_cmds));
         m_upload_cmd = vvk::CommandBuffer(m_cmds[0], device().handle().Dispatch());
         m_render_cmd = vvk::CommandBuffer(m_cmds[1], device().handle().Dispatch());
@@ -368,7 +379,6 @@ void VulkanRender::Impl::drawFrameSwapchain() {
                 .pSignalSemaphores    = rr.sem_swap_finish.address(),
     };
 
-    VVK_CHECK_VOID_RE(device().present_queue().handle.Submit(sub_info, *rr.fence_frame));
     VkPresentInfoKHR present_info {
         .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext              = nullptr,
@@ -378,7 +388,11 @@ void VulkanRender::Impl::drawFrameSwapchain() {
         .pSwapchains        = device().swapchain().handle().address(),
         .pImageIndices      = &image_index,
     };
-    VVK_CHECK_VOID_RE(device().present_queue().handle.Present(present_info));
+    {
+        std::lock_guard<std::mutex> lk(device().queue_mutex());
+        VVK_CHECK_VOID_RE(device().present_queue().handle.Submit(sub_info, *rr.fence_frame));
+        VVK_CHECK_VOID_RE(device().present_queue().handle.Present(present_info));
+    }
 
     VVK_CHECK_VOID_RE(rr.fence_frame.Wait(vk_wait_time));
     VVK_CHECK_VOID_RE(rr.fence_frame.Reset());
@@ -410,7 +424,10 @@ void VulkanRender::Impl::drawFrameOffscreen() {
         .commandBufferCount = 1,
         .pCommandBuffers    = rr.command.address(),
     };
-    VVK_CHECK_VOID_RE(device().graphics_queue().handle.Submit(sub_info, *rr.fence_frame));
+    {
+        std::lock_guard<std::mutex> lk(device().queue_mutex());
+        VVK_CHECK_VOID_RE(device().graphics_queue().handle.Submit(sub_info, *rr.fence_frame));
+    }
 
     VVK_CHECK_VOID_RE(rr.fence_frame.Wait(vk_wait_time));
     VVK_CHECK_VOID_RE(rr.fence_frame.Reset());
@@ -583,7 +600,10 @@ void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
             .commandBufferCount = 1,
             .pCommandBuffers    = m_upload_cmd.address(),
         };
-        VVK_CHECK_VOID_RE(device().graphics_queue().handle.Submit(sub_info, *upload_fence));
+        {
+            std::lock_guard<std::mutex> lk(device().queue_mutex());
+            VVK_CHECK_VOID_RE(device().graphics_queue().handle.Submit(sub_info, *upload_fence));
+        }
         VVK_CHECK_VOID_RE(upload_fence.Wait(vk_wait_time));
     }
     m_pass_loaded = true;

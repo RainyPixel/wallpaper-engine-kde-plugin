@@ -47,7 +47,9 @@ struct TextureKey {
 // scale with resolution and are never shared between screens.
 class TextureCache : NoCopy, NoMove {
 public:
-    TextureCache(const Device&);
+    // cmd_pool is the per-screen command pool used for transient layout/copy
+    // commands, so screens sharing a device never touch the same pool.
+    TextureCache(const Device&, const vvk::CommandPool& cmd_pool);
     ~TextureCache();
 
     void Clear();
@@ -68,7 +70,8 @@ private:
     vvk::CommandBuffers               m_tex_cmds;
     vvk::CommandBuffer                m_tex_cmd;
 
-    const Device& m_device;
+    const Device&           m_device;
+    const vvk::CommandPool& m_cmd_pool;
 
     struct QueryTex {
         idx                index { 0 };

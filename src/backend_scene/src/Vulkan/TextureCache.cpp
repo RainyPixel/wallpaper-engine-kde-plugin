@@ -411,6 +411,7 @@ std::optional<ExImageParameters> TextureCache::CreateExTex(uint32_t width, uint3
         const auto& eximg = opt.value();
 
         if (! m_tex_cmd) allocateCmd();
+        std::lock_guard<std::mutex> lk(m_device.queue_mutex());
         TransImgLayout(m_device.graphics_queue().handle, m_tex_cmd, eximg, VK_IMAGE_LAYOUT_GENERAL);
         VVK_CHECK(m_device.handle().WaitIdle());
     }
@@ -510,16 +511,19 @@ ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who) {
             extents.push_back(VkExtent3D { (u32)image_data.width, (u32)image_data.height, 1 });
         }
 
-        CopyImageData(transform<VmaBufferParameters>(stage_bufs,
-                                                     [](BufferParameters e) {
-                                                         return e;
-                                                     }),
-                      extents,
-                      m_device.graphics_queue().handle,
-                      m_tex_cmd,
-                      image_paras);
+        {
+            std::lock_guard<std::mutex> lk(m_device.queue_mutex());
+            CopyImageData(transform<VmaBufferParameters>(stage_bufs,
+                                                         [](BufferParameters e) {
+                                                             return e;
+                                                         }),
+                          extents,
+                          m_device.graphics_queue().handle,
+                          m_tex_cmd,
+                          image_paras);
 
-        m_device.handle().WaitIdle();
+            m_device.handle().WaitIdle();
+        }
     }
     auto& entry = m_tex_map[image.key];
     entry.slots = std::move(img_slots);
@@ -528,8 +532,7 @@ ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who) {
 }
 
 void TextureCache::allocateCmd() {
-    const auto& pool = m_device.cmd_pool();
-    VVK_CHECK(pool.Allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_tex_cmds));
+    VVK_CHECK(m_cmd_pool.Allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_tex_cmds));
     m_tex_cmd = vvk::CommandBuffer(m_tex_cmds[0], m_device.handle().Dispatch());
 }
 
@@ -554,18 +557,21 @@ std::optional<VmaImageParameters> TextureCache::CreateTex(TextureKey tex_key) {
             break;
 
         if (! m_tex_cmd) allocateCmd();
-        TransImgLayout(m_device.graphics_queue().handle,
-                       m_tex_cmd,
-                       image_paras,
-                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-        VVK_CHECK_ACT(break, m_device.handle().WaitIdle());
+        {
+            std::lock_guard<std::mutex> lk(m_device.queue_mutex());
+            TransImgLayout(m_device.graphics_queue().handle,
+                           m_tex_cmd,
+                           image_paras,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            VVK_CHECK_ACT(break, m_device.handle().WaitIdle());
+        }
         return image_paras;
     } while (false);
     return std::nullopt;
 }
 
-TextureCache::TextureCache(const Device& device): m_device(device) {}
+TextureCache::TextureCache(const Device& device, const vvk::CommandPool& cmd_pool)
+    : m_device(device), m_cmd_pool(cmd_pool) {}
 
 TextureCache::~TextureCache() {};
 

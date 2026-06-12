@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.5
 import org.kde.plasma.core 2.0 as PlasmaCore
 import org.kde.plasma.components 3.0 as PlasmaComponents
 import org.kde.kirigami 2.4 as Kirigami
+import com.github.catsout.wallpaperEngineKde
 
 import "page"
 
@@ -35,6 +36,7 @@ ColumnLayout {
     property alias  cfg_SwitchTimer:         settingPage.cfg_SwitchTimer
     property alias  cfg_RandomizeWallpaper:  settingPage.cfg_RandomizeWallpaper
     property alias  cfg_NoRandomWhilePaused: settingPage.cfg_NoRandomWhilePaused
+    property alias  cfg_GlobalMode:          settingPage.cfg_GlobalMode
     property alias  cfg_PauseFilterByScreen: settingPage.cfg_PauseFilterByScreen
     property alias  cfg_PauseOnBatPower:     settingPage.cfg_PauseOnBatPower
     property alias  cfg_PauseBatPercent:     settingPage.cfg_PauseBatPercent
@@ -104,8 +106,29 @@ ColumnLayout {
         `, this);
     }
 
+    // Global Mode: on Apply, push the shared keys into ~/.config/wekde/global.json
+    // and wake the running wallpaper(s) (the config dialog may be another process).
+    GlobalConfig {
+        id: globalCfg
+    }
+    WallpaperSyncBus {
+        id: syncBus
+    }
     function saveConfig() {
         wallpaperPage.saveConfig();
+        globalCfg.enabled = cfg_GlobalMode;
+        if(cfg_GlobalMode) {
+            globalCfg.setBatch({
+                "WallpaperSource":     cfg_WallpaperSource,
+                "WallpaperWorkShopId": cfg_WallpaperWorkShopId,
+                "RandomizeWallpaper":  cfg_RandomizeWallpaper,
+                "SwitchTimer":         cfg_SwitchTimer,
+                "NoRandomWhilePaused": cfg_NoRandomWhilePaused,
+                "FilterStr":           cfg_FilterStr,
+                "SortMode":            cfg_SortMode
+            });
+        }
+        syncBus.broadcastGlobalChanged();
     }
 
     WallpaperListModel {

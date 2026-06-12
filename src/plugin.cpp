@@ -8,6 +8,8 @@
 #include "PluginInfo.hpp"
 #include "FileHelper.hpp"
 #include "GamemodeMonitor.hpp"
+#include "WallpaperSyncBus.hpp"
+#include "GlobalConfigStore.hpp"
 
 constexpr std::array<uint, 2> WPVer { 1, 2 };
 
@@ -26,6 +28,8 @@ public:
         qmlRegisterType<wekde::TTYSwitchMonitor>(uri, WPVer[0], WPVer[1], "TTYSwitchMonitor");
         qmlRegisterType<wekde::FileHelper>(uri, WPVer[0], WPVer[1], "FileHelper");
         qmlRegisterType<wekde::GamemodeMonitor>(uri, WPVer[0], WPVer[1], "GamemodeMonitor");
+        qmlRegisterType<wekde::WallpaperSyncBus>(uri, WPVer[0], WPVer[1], "WallpaperSyncBus");
+        qmlRegisterType<wekde::GlobalConfig>(uri, WPVer[0], WPVer[1], "GlobalConfig");
     }
 };
 

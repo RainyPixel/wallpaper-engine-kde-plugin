@@ -70,6 +70,10 @@
       <label>Prevent randomization while wallpapers are paused</label>
       <default>false</default>
     </entry>
+    <entry name="GlobalMode" type="Bool">
+      <label>Share one configuration across all screens</label>
+      <default>false</default>
+    </entry>
     <entry name="MpvStats" type="Bool">
       <label>Mpv Stats</label>
       <default>false</default>

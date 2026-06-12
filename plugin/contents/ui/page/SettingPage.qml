@@ -10,12 +10,17 @@ import "../js/utils.mjs" as Utils
 import org.kde.plasma.core 2.0 as PlasmaCore
 import org.kde.plasma.components 3.0 as PlasmaComponents
 import org.kde.kirigami 2.6 as Kirigami
+import com.github.catsout.wallpaperEngineKde
 
 Flickable {
     id: settingTab
 
     // Наследуем тему от родителя
     Kirigami.Theme.inherit: true
+
+    GlobalConfig {
+        id: globalCfg
+    }
 
     property alias cfg_Fps: sliderFps.value
     property alias cfg_Volume: sliderVol.value
@@ -28,6 +33,7 @@ Flickable {
     property alias cfg_SwitchTimer: randomSpin.value
     property alias cfg_RandomizeWallpaper: ckbox_randomizeWallpaper.checked
     property alias cfg_NoRandomWhilePaused: ckbox_noRandomWhilePaused.checked
+    property alias cfg_GlobalMode: ckbox_globalMode.checked
     property alias cfg_PauseFilterByScreen: ckbox_pauseFilterByScreen.checked
 
     property alias cfg_PauseOnBatPower: chkbox_pauseOnBatPower.checked
@@ -102,10 +108,18 @@ Flickable {
                }
             }
             OptionItem {
-                text: 'Only check window on current screen'
+                text: 'Only react to windows on this screen'
                 text_color: Kirigami.Theme.textColor
                 actor: Switch {
                     id: ckbox_pauseFilterByScreen
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        color: Kirigami.Theme.disabledTextColor
+                        wrapMode: Text.Wrap
+                        text: "When pausing on focus/maximized windows, ignore windows on other screens"
+                    }
                 }
             }
             OptionItem {
@@ -118,11 +132,15 @@ Flickable {
             OptionItem {
                 text: 'Pause if battery level is below'
                 text_color: Kirigami.Theme.textColor
-                actor: SpinBox {
+                visible: chkbox_pauseOnBatPower.checked
+                actor: RowLayout {
+                    SpinBox {
                         id: spin_pauseBatPercent
                         from: 0
                         to: 100
                         stepSize: 1
+                    }
+                    Label { text: " %"; color: Kirigami.Theme.textColor }
                 }
             }
             OptionItem {
@@ -225,6 +243,24 @@ Flickable {
                             id: ckbox_noRandomWhilePaused
                         }
                     }
+                }
+            }
+
+            OptionItem {
+                text: 'Same wallpaper on all screens'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/window.svg'
+                actor: Switch {
+                    id: ckbox_globalMode
+                    // reflect the real shared state, not this screen's stale copy
+                    Component.onCompleted: checked = globalCfg.enabled
+                }
+                contentBottom: Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.disabledTextColor
+                    text: "Share the wallpaper choice and randomization across all screens "
+                        + "(one configuration for the whole system). Press Apply to take effect."
                 }
             }
 

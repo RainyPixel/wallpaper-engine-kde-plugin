@@ -17,6 +17,8 @@ add_library(${PROJECT_NAME}
 	PluginInfo.cpp
 	FileHelper.cpp
 	GamemodeMonitor.cpp
+	WallpaperSyncBus.cpp
+	GlobalConfigStore.cpp
 	qmldir
 )
 

@@ -438,11 +438,17 @@ void AssetCache::ReleaseScreen(ScreenToken who) {
     }
 }
 
-ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who) {
+ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who, std::string_view ns) {
     std::lock_guard<std::mutex> lk(m_mutex);
 
-    if (exists(m_tex_map, image.key)) {
-        auto& entry = m_tex_map.at(image.key);
+    // Namespace the cache key by the wallpaper identity: this cache is shared
+    // across screens on the same GPU, and image.key is only a per-package relative
+    // texture name, so two different wallpapers could otherwise collide on a same
+    // name and reuse each other's GPU image.
+    const std::string key = std::string(ns) + '|' + image.key;
+
+    if (exists(m_tex_map, key)) {
+        auto& entry = m_tex_map.at(key);
         entry.holders.insert(who);
         return entry.slots;
     }
@@ -525,7 +531,7 @@ ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who) {
             m_device.handle().WaitIdle();
         }
     }
-    auto& entry = m_tex_map[image.key];
+    auto& entry = m_tex_map[key];
     entry.slots = std::move(img_slots);
     entry.holders.insert(who);
     return entry.slots;

@@ -117,7 +117,8 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         } else {
             auto image = scene.imageParser->Parse(tex_name);
             if (image) {
-                img_slots = device.asset_cache().CreateTexShared(*image, rr.screen_token);
+                img_slots =
+                    device.asset_cache().CreateTexShared(*image, rr.screen_token, scene.scene_id);
             } else {
                 LOG_ERROR("parse tex \"%s\" failed", tex_name.c_str());
             }

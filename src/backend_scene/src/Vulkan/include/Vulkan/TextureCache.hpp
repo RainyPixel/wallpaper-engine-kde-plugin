@@ -93,7 +93,7 @@ public:
     AssetCache(const Device&);
     ~AssetCache();
 
-    ImageSlotsRef CreateTexShared(Image&, ScreenToken);
+    ImageSlotsRef CreateTexShared(Image&, ScreenToken, std::string_view ns);
     void          ReleaseScreen(ScreenToken);
 
 private:

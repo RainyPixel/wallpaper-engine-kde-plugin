@@ -23,6 +23,7 @@
 #include "VulkanRender/SceneToRenderGraph.hpp"
 #include "VulkanRender/VulkanRender.hpp"
 #include <atomic>
+#include <sstream>
 
 using namespace wallpaper;
 
@@ -35,6 +36,22 @@ using namespace wallpaper;
 
 namespace
 {
+bool MirrorEnabled() {
+    const char* e = std::getenv("WP_MIRROR");
+    return e != nullptr && e[0] != '0' && e[0] != '\0';
+}
+
+std::string UuidHex(std::span<const std::uint8_t> uuid) {
+    static const char* k = "0123456789abcdef";
+    std::string        s;
+    s.reserve(uuid.size() * 2);
+    for (auto b : uuid) {
+        s.push_back(k[b >> 4]);
+        s.push_back(k[b & 0xf]);
+    }
+    return s;
+}
+
 template<typename T>
 void AddMsgCmd(looper::Message& msg, T cmd) {
     msg.setInt32("cmd", (int32_t)cmd);
@@ -86,10 +103,11 @@ public:
         }
     }
 
-    void sendCmdLoadScene();
-    void sendFirstFrameOk();
-    bool isGenGraphviz() const { return m_gen_graphviz; }
-    bool cachePasses() const { return m_cache_passes; }
+    void               sendCmdLoadScene();
+    void               sendFirstFrameOk();
+    bool               isGenGraphviz() const { return m_gen_graphviz; }
+    bool               cachePasses() const { return m_cache_passes; }
+    const std::string& userProps() const { return m_user_props_json; }
 
 private:
     void loadScene();
@@ -165,6 +183,27 @@ public:
     void setMousePos(double x, double y) { m_mouse_pos.store(std::array { (float)x, (float)y }); }
 
 private:
+    std::string buildMirrorKey() const {
+        if (! m_scene) return {};
+        std::ostringstream os;
+        os << m_uuid_hex << '|' << m_scene->scene_id << '|' << m_width << 'x' << m_height << '|'
+           << (int)m_fillmode << '|' << m_speed << '|' << main_handler.userProps();
+        return os.str();
+    }
+
+    // After the graph is compiled, decide whether this screen renders or mirrors,
+    // and remember the result for the draw loop.
+    void decideFrameSource() {
+        auto* wpUpdater = static_cast<WPShaderValueUpdater*>(m_scene->shaderValueUpdater.get());
+        bool  mouse_dep = wpUpdater->MouseDependent();
+        std::string key = (MirrorEnabled() && ! mouse_dep) ? buildMirrorKey() : std::string {};
+        m_mirror        = ! m_render->beginFrameSource(key);
+        LOG_INFO("scene '%s' mouse_dependent=%d mirror=%d",
+                 m_scene->scene_id.c_str(),
+                 (int)mouse_dep,
+                 (int)m_mirror);
+    }
+
     MHANDLER_CMD(STOP) {
         bool stop { false };
         if (msg->findBool("value", &stop)) {
@@ -176,6 +215,24 @@ private:
     }
     MHANDLER_CMD(DRAW) {
         frame_timer.FrameBegin();
+        if (m_mirror) {
+            if (m_render->mirrorLost()) {
+                // Primary went away: rebuild our graph and re-run the election;
+                // the first surviving screen for this group becomes the new primary.
+                LOG_INFO("mirror: primary gone, screen re-electing");
+                m_render->releaseMirror();
+                if (m_scene) {
+                    m_rg = sceneToRenderGraph(*m_scene);
+                    m_render->compileRenderGraph(*m_scene, *m_rg);
+                    m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+                    decideFrameSource();
+                }
+            } else {
+                m_render->drawFrame(*m_scene);
+            }
+            frame_timer.FrameEnd();
+            return;
+        }
         if (m_rg) {
             // LOG_INFO("frame info, fps: %.1f, frametime: %.1f", 1.0f, 1000.0f*m_scene->frameTime);
             m_scene->shaderValueUpdater->FrameBegin();
@@ -218,6 +275,7 @@ private:
     MHANDLER_CMD(SET_SCENE) {
         if (msg->findObject("scene", &m_scene)) {
             m_scene->cache_passes = main_handler.cachePasses();
+            m_render->releaseMirror();
             if (m_rg) m_render->clearLastRenderGraph();
             m_rg = sceneToRenderGraph(*m_scene);
 
@@ -225,21 +283,16 @@ private:
             m_render->compileRenderGraph(*m_scene, *m_rg);
             m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
 
-            {
-                auto* wpUpdater =
-                    static_cast<WPShaderValueUpdater*>(m_scene->shaderValueUpdater.get());
-                bool mouse_dep = wpUpdater->MouseDependent();
-                LOG_INFO("scene '%s' mouse_dependent=%d (mirror-%s)",
-                         m_scene->scene_id.c_str(),
-                         (int)mouse_dep,
-                         mouse_dep ? "ineligible" : "eligible");
-            }
+            decideFrameSource();
         }
     }
     MHANDLER_CMD(SET_SPEED) { msg->findFloat("value", &m_speed); }
     MHANDLER_CMD(INIT_VULKAN) {
         std::shared_ptr<RenderInitInfo> info;
         if (msg->findObject("info", &info)) {
+            m_width    = info->width;
+            m_height   = info->height;
+            m_uuid_hex = UuidHex(info->uuid);
             m_render->init(*info);
 
             // inited, callback to laod scene
@@ -259,6 +312,11 @@ private:
     std::unique_ptr<rg::RenderGraph>      m_rg { nullptr };
 
     FillMode m_fillmode { FillMode::ASPECTCROP };
+
+    bool        m_mirror { false };
+    std::string m_uuid_hex;
+    uint16_t    m_width { 0 };
+    uint16_t    m_height { 0 };
 
     std::atomic<std::array<float, 2>> m_mouse_pos { std::array { 0.5f, 0.5f } };
 };

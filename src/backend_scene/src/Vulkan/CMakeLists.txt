@@ -7,6 +7,7 @@ STATIC
 Instance.cpp
 Device.cpp
 SharedGpuContext.cpp
+MirrorRegistry.cpp
 GraphicsPipeline.cpp
 Shader.cpp
 StagingBuffer.cpp

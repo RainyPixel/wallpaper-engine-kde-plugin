@@ -12,6 +12,7 @@
 
 #include "Vulkan/Device.hpp"
 #include "Vulkan/SharedGpuContext.hpp"
+#include "Vulkan/MirrorRegistry.hpp"
 #include "Vulkan/TextureCache.hpp"
 #include "Vulkan/Swapchain.hpp"
 #include "Vulkan/VulkanExSwapchain.hpp"
@@ -70,6 +71,15 @@ struct VulkanRender::Impl {
     void drawFrameOffscreen();
     void setRenderTargetSize(Scene&, rg::RenderGraph&);
 
+    bool beginFrameSource(const std::string& key);
+    bool isMirror() const { return m_mirror; }
+    bool mirrorLost() const {
+        return m_mirror && m_mirror_slot && ! m_mirror_slot->primary_alive.load();
+    }
+    void releaseMirror();
+    void ensureSwapchain();
+    void bindMirrorSource();
+
     std::shared_ptr<SharedGpuContext> m_gpu;
 
     Instance& instance() { return m_gpu->instance(); }
@@ -98,8 +108,16 @@ struct VulkanRender::Impl {
     bool m_inited { false };
     bool m_pass_loaded { false };
 
-    std::unique_ptr<VulkanExSwapchain> m_ex_swapchain;
+    VkImageTiling                      m_ex_tiling { VK_IMAGE_TILING_OPTIMAL };
+    std::shared_ptr<VulkanExSwapchain> m_ex_swapchain;
     RenderingResources                 m_rendering_resources;
+
+    // Mirror state: a secondary screen does not render; it displays the primary's
+    // swapchain (m_mirror_source) shared through m_mirror_slot.
+    bool                               m_mirror { false };
+    std::string                        m_mirror_key;
+    std::shared_ptr<MirrorSlot>        m_mirror_slot;
+    std::shared_ptr<VulkanExSwapchain> m_mirror_source;
 
     std::vector<VulkanPass*> m_passes;
 };
@@ -120,7 +138,14 @@ void VulkanRender::UpdateCameraFillMode(Scene& scene, wallpaper::FillMode fill) 
     pImpl->UpdateCameraFillMode(scene, fill);
 };
 
-wallpaper::ExSwapchain* VulkanRender::exSwapchain() const { return pImpl->m_ex_swapchain.get(); };
+bool VulkanRender::beginFrameSource(const std::string& key) { return pImpl->beginFrameSource(key); }
+bool VulkanRender::isMirror() const { return pImpl->isMirror(); }
+bool VulkanRender::mirrorLost() const { return pImpl->mirrorLost(); }
+void VulkanRender::releaseMirror() { pImpl->releaseMirror(); }
+
+wallpaper::ExSwapchain* VulkanRender::exSwapchain() const {
+    return pImpl->m_mirror ? pImpl->m_mirror_source.get() : pImpl->m_ex_swapchain.get();
+};
 
 bool VulkanRender::Impl::init(RenderInitInfo info) {
     if (m_inited) return true;
@@ -188,15 +213,10 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
     }
     m_rt_pool = std::make_unique<TextureCache>(device(), m_cmd_pool);
 
-    if (info.offscreen) {
-        m_ex_swapchain = CreateExSwapchain(*m_rt_pool,
-                                           extent.width,
-                                           extent.height,
-                                           (info.offscreen_tiling == TexTiling::OPTIMAL
-                                                ? VK_IMAGE_TILING_OPTIMAL
-                                                : VK_IMAGE_TILING_LINEAR));
-        m_with_surface = false;
-    }
+    // The offscreen swapchain is created lazily in beginFrameSource(): a screen
+    // that ends up mirroring another never allocates one.
+    m_ex_tiling = (info.offscreen_tiling == TexTiling::OPTIMAL ? VK_IMAGE_TILING_OPTIMAL
+                                                               : VK_IMAGE_TILING_LINEAR);
 
     if (! initRes()) return false;
 
@@ -215,7 +235,9 @@ bool VulkanRender::Impl::initRes() {
         m_finpass->setPresentQueueIndex(device().present_queue().family_index);
         m_finpass->setPresentLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     } else {
-        m_finpass->setPresentFormat(m_ex_swapchain->format());
+        // Offscreen present params are fixed (see VulkanExSwapchain::format); the
+        // swapchain itself may not exist yet when mirroring.
+        m_finpass->setPresentFormat(VK_FORMAT_R8G8B8A8_UNORM);
         m_finpass->setPresentLayout(VK_IMAGE_LAYOUT_GENERAL);
         m_finpass->setPresentQueueIndex(VK_QUEUE_FAMILY_EXTERNAL);
     }
@@ -260,6 +282,9 @@ void VulkanRender::Impl::destroy() {
     if (m_gpu && device().handle()) {
         VVK_CHECK(device().handle().WaitIdle());
 
+        // If we were a mirror primary, release the group so secondaries re-elect.
+        releaseMirror();
+
         // res
         for (auto& p : m_passes) {
             p->destory(device(), m_rendering_resources);
@@ -268,7 +293,8 @@ void VulkanRender::Impl::destroy() {
         m_dyn_buf->destroy();
 
         // Free this screen's GPU resources while the (possibly shared) device is
-        // still alive, then drop the asset references it held.
+        // still alive, then drop the asset references it held. A secondary still
+        // holding our swapchain keeps it alive via shared_ptr.
         m_ex_swapchain.reset();
         m_rt_pool.reset();
         device().asset_cache().ReleaseScreen(m_token);
@@ -308,6 +334,13 @@ void VulkanRender::Impl::DestroyRenderingResource(RenderingResources& rr) {}
 // VulkanExSwapchain* VulkanRender::exSwapchain() const { return m_ex_swapchain.get(); }
 
 void VulkanRender::Impl::drawFrame(Scene& scene) {
+    if (m_mirror) {
+        // Secondary: don't render. Bind the primary's swapchain when ready and ask
+        // the QML side to repaint so it picks up newly published frames.
+        if (! m_mirror_source) bindMirrorSource();
+        if (m_redraw_cb) m_redraw_cb();
+        return;
+    }
     if (! (m_inited && m_pass_loaded)) return;
 
     if (std::getenv("WP_VMA_LOG")) {
@@ -517,6 +550,57 @@ void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
     gCam.Update();
     gPerCam.Update();
     scene.UpdateLinkedCamera("global");
+}
+
+void VulkanRender::Impl::ensureSwapchain() {
+    if (m_ex_swapchain || m_with_surface) return;
+    m_ex_swapchain =
+        CreateExSwapchain(*m_rt_pool, m_out_extent.width, m_out_extent.height, m_ex_tiling);
+    if (! m_ex_swapchain) LOG_ERROR("failed to create ex-swapchain");
+}
+
+void VulkanRender::Impl::bindMirrorSource() {
+    if (! m_mirror_slot) return;
+    std::lock_guard<std::mutex> lk(m_mirror_slot->mtx);
+    m_mirror_source = m_mirror_slot->swapchain;
+}
+
+bool VulkanRender::Impl::beginFrameSource(const std::string& key) {
+    m_mirror_key = key;
+    if (key.empty()) {
+        ensureSwapchain();
+        m_mirror = false;
+        return true;
+    }
+
+    auto [role, slot] = MirrorRegistry::Instance().acquire(key, m_token);
+    m_mirror_slot     = slot;
+    if (role == MirrorRole::Primary) {
+        ensureSwapchain();
+        MirrorRegistry::Instance().publish(slot, m_ex_swapchain);
+        m_mirror = false;
+        return true;
+    }
+
+    // Secondary: drop the graph we built only to learn mouse-dependency, free our
+    // own swapchain if any, and display the primary's frames instead.
+    m_mirror = true;
+    clearLastRenderGraph();
+    m_ex_swapchain.reset();
+    bindMirrorSource();
+    LOG_INFO("mirror: screen %llu mirrors group %s", (unsigned long long)m_token, key.c_str());
+    return false;
+}
+
+void VulkanRender::Impl::releaseMirror() {
+    // Only a primary (rendered, non-empty key) owns the group registration.
+    if (! m_mirror && ! m_mirror_key.empty()) {
+        MirrorRegistry::Instance().release(m_mirror_key, m_token);
+    }
+    m_mirror = false;
+    m_mirror_slot.reset();
+    m_mirror_source.reset();
+    m_mirror_key.clear();
 }
 
 void VulkanRender::Impl::clearLastRenderGraph() {

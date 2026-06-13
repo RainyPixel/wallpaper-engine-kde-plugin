@@ -76,11 +76,12 @@ class TextureNode : public QObject, public QSGSimpleTextureNode {
 public:
     typedef std::function<QSGTexture*(QQuickWindow*)> EatFrameOp;
     TextureNode(QQuickWindow* window, sp_scene_t scene, bool valid, bool share_gpu,
-                EatFrameOp eatFrameOp)
+                bool mirror_scene, EatFrameOp eatFrameOp)
         : m_texture(nullptr),
           m_scene(scene),
           m_enable_valid(valid),
           m_share_gpu(share_gpu),
+          m_mirror_scene(mirror_scene),
           m_eatFrameOp(eatFrameOp),
           m_window(window),
           m_first_frame(false) {
@@ -118,6 +119,7 @@ public:
         info.enable_valid_layer = m_enable_valid;
         info.offscreen          = true;
         info.share_gpu          = m_share_gpu;
+        info.mirror_scene       = m_mirror_scene;
         info.offscreen_tiling   = m_glex.tiling();
         info.uuid               = m_glex.uuid();
         info.width              = w;
@@ -182,6 +184,7 @@ private:
     sp_scene_t m_scene;
     bool       m_enable_valid;
     bool       m_share_gpu;
+    bool       m_mirror_scene;
 
     QSGTexture*       m_init_texture;
     QSGTexture*       m_texture;
@@ -220,8 +223,8 @@ void SceneObject::resizeFb() {
 QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
     TextureNode* node = static_cast<TextureNode*>(oldNode);
     if (! node) {
-        node =
-            new TextureNode(window(), m_scene, m_enable_valid, m_share_gpu, [this](QQuickWindow*) {
+        node = new TextureNode(
+            window(), m_scene, m_enable_valid, m_share_gpu, m_mirror_scene, [this](QQuickWindow*) {
                 return (QSGTexture*)nullptr;
             });
         if (node->initGl()) {
@@ -314,6 +317,12 @@ bool SceneObject::shareGpu() const { return m_share_gpu; }
 void SceneObject::setShareGpu(bool value) {
     // Consumed when the render node is created; takes effect on next load.
     m_share_gpu = value;
+}
+
+bool SceneObject::mirrorScene() const { return m_mirror_scene; }
+void SceneObject::setMirrorScene(bool value) {
+    // Consumed when the render node is created; takes effect on next load.
+    m_mirror_scene = value;
 }
 
 QString SceneObject::userProperties() const { return m_userProperties; }

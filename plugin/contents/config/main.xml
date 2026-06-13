@@ -82,6 +82,10 @@
       <label>Share one GPU device across screens on the same GPU</label>
       <default>true</default>
     </entry>
+    <entry name="MirrorScene" type="Bool">
+      <label>Render an identical scene wallpaper once and mirror it to other screens</label>
+      <default>false</default>
+    </entry>
     <entry name="MpvStats" type="Bool">
       <label>Mpv Stats</label>
       <default>false</default>

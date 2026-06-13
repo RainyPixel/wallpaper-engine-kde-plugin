@@ -29,6 +29,7 @@ Rectangle {
     property int    fps: wallpaper.configuration.Fps
     property bool   cacheScenePasses: wallpaper.configuration.SceneCachePasses
     property bool   shareGpuContext: wallpaper.configuration.ShareGpuContext
+    property bool   mirrorScene: wallpaper.configuration.MirrorScene
 
     property bool   randomizeWallpaper: effCfg("RandomizeWallpaper", wallpaper.configuration.RandomizeWallpaper)
     property bool   noRandomWhilePaused: effCfg("NoRandomWhilePaused", wallpaper.configuration.NoRandomWhilePaused)

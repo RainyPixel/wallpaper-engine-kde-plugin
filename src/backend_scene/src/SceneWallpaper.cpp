@@ -36,9 +36,10 @@ using namespace wallpaper;
 
 namespace
 {
-bool MirrorEnabled() {
-    const char* e = std::getenv("WP_MIRROR");
-    return e != nullptr && e[0] != '0' && e[0] != '\0';
+// The WP_MIRROR env var overrides the per-wallpaper setting (0 forces off).
+bool MirrorEnabled(bool requested) {
+    if (const char* e = std::getenv("WP_MIRROR")) return e[0] != '0' && e[0] != '\0';
+    return requested;
 }
 
 std::string UuidHex(std::span<const std::uint8_t> uuid) {
@@ -208,8 +209,9 @@ private:
     void decideFrameSource() {
         auto* wpUpdater = static_cast<WPShaderValueUpdater*>(m_scene->shaderValueUpdater.get());
         bool  mouse_dep = wpUpdater->MouseDependent();
-        std::string key = (MirrorEnabled() && ! mouse_dep) ? buildMirrorKey() : std::string {};
-        m_mirror        = ! m_render->beginFrameSource(key);
+        std::string key =
+            (MirrorEnabled(m_mirror_setting) && ! mouse_dep) ? buildMirrorKey() : std::string {};
+        m_mirror = ! m_render->beginFrameSource(key);
         LOG_INFO("scene '%s' mouse_dependent=%d mirror=%d",
                  m_scene->scene_id.c_str(),
                  (int)mouse_dep,
@@ -302,9 +304,10 @@ private:
     MHANDLER_CMD(INIT_VULKAN) {
         std::shared_ptr<RenderInitInfo> info;
         if (msg->findObject("info", &info)) {
-            m_width    = info->width;
-            m_height   = info->height;
-            m_uuid_hex = UuidHex(info->uuid);
+            m_width          = info->width;
+            m_height         = info->height;
+            m_uuid_hex       = UuidHex(info->uuid);
+            m_mirror_setting = info->mirror_scene;
             m_render->init(*info);
 
             // inited, callback to laod scene
@@ -326,6 +329,7 @@ private:
     FillMode m_fillmode { FillMode::ASPECTCROP };
 
     bool        m_mirror { false };
+    bool        m_mirror_setting { false };
     std::string m_uuid_hex;
     uint16_t    m_width { 0 };
     uint16_t    m_height { 0 };

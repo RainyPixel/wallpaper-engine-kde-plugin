@@ -24,6 +24,7 @@ class SceneObject : public QQuickItem {
     Q_PROPERTY(bool muted READ muted WRITE setMuted)
     Q_PROPERTY(bool cachePasses READ cachePasses WRITE setCachePasses)
     Q_PROPERTY(bool shareGpu READ shareGpu WRITE setShareGpu)
+    Q_PROPERTY(bool mirrorScene READ mirrorScene WRITE setMirrorScene)
     Q_PROPERTY(QString userProperties READ userProperties WRITE setUserProperties NOTIFY
                    userPropertiesChanged)
 public:
@@ -50,6 +51,7 @@ public:
     bool    muted() const;
     bool    cachePasses() const;
     bool    shareGpu() const;
+    bool    mirrorScene() const;
     QString userProperties() const;
 
     void setFps(int);
@@ -59,6 +61,7 @@ public:
     void setMuted(bool);
     void setCachePasses(bool);
     void setShareGpu(bool);
+    void setMirrorScene(bool);
     void setUserProperties(const QString&);
 
     // debug
@@ -99,6 +102,7 @@ private:
     bool    m_muted { false };
     bool    m_cachePasses { true };
     bool    m_share_gpu { true };
+    bool    m_mirror_scene { false };
     QString m_userProperties;
 
 public:

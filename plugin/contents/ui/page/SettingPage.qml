@@ -27,6 +27,7 @@ Flickable {
     property alias cfg_MpvStats: ckbox_mpvStats.checked
     property alias cfg_SceneCachePasses: ckbox_cacheScenePasses.checked
     property alias cfg_ShareGpuContext: ckbox_shareGpuContext.checked
+    property alias cfg_MirrorScene: ckbox_mirrorScene.checked
     property string cfg_MpvHwdec
     property alias cfg_Speed: spin_speed.dValue
     property alias cfg_MuteAudio: ckbox_muteAudio.checked
@@ -457,6 +458,25 @@ Flickable {
                         color: Kirigami.Theme.disabledTextColor
                         text: "On multi-monitor setups, share one GPU device so identical "
                             + "textures load once instead of per screen. Saves VRAM. "
+                            + "Takes effect after the wallpaper reloads."
+                    }
+                }
+            }
+            OptionItem {
+                text: 'Mirror scene across screens'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/tuning.svg'
+                actor: Switch {
+                    id: ckbox_mirrorScene
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        text: "On multi-monitor setups showing the same scene wallpaper, render "
+                            + "it once and mirror it to the other screens. Saves the per-screen "
+                            + "render-target VRAM. Skipped for wallpapers that react to the cursor. "
                             + "Takes effect after the wallpaper reloads."
                     }
                 }

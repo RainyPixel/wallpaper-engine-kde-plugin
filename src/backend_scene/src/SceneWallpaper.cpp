@@ -188,6 +188,8 @@ public:
 
     void stopRendering() { frame_timer.Stop(); }
 
+    void releaseMirrorGroup() { m_render->releaseMirror(); }
+
     bool renderInited() const { return m_render->inited(); }
 
     void setMousePos(double x, double y) { m_mouse_pos.store(std::array { (float)x, (float)y }); }
@@ -338,6 +340,9 @@ void MainHandler::stopRender() {
     }
     if (m_render_loop) m_render_loop->stop();
     if (m_main_loop) m_main_loop->stop();
+    // After the loops are joined (no render thread left), drop any mirror-group
+    // membership so a primary leaving lets the remaining screens re-elect.
+    if (m_render_handler) m_render_handler->releaseMirrorGroup();
 }
 
 MainHandler::~MainHandler() { stopRender(); }

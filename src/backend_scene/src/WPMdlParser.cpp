@@ -43,8 +43,8 @@ bool WPMdlParser::Parse(std::string_view path, fs::VFS& vfs, WPMdl& mdl) {
     auto str_path = std::string(path);
     auto pfile    = vfs.Open("/assets/" + str_path);
     if (! pfile) return false;
-    auto memfile  = fs::MemBinaryStream(*pfile);
-    auto& f = memfile;
+    auto  memfile = fs::MemBinaryStream(*pfile);
+    auto& f       = memfile;
 
     mdl.mdlv = ReadMDLVesion(f);
 

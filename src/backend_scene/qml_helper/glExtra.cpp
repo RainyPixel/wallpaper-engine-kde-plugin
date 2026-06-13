@@ -211,6 +211,15 @@ uint GlExtra::genExTexture(ExHandle& handle) {
         return 0;
     }
 
+    // Import takes ownership of the fd, so dup it: the ExHandle's fd is owned by
+    // the swapchain and may be imported by several screens (mirroring). Done before
+    // the context switch so a failure here doesn't leave the wrong GL context current.
+    int dupfd = ::dup(handle.fd);
+    if (dupfd < 0) {
+        LOG_ERROR("gl: failed to dup ExHandle fd %d", handle.fd);
+        return 0;
+    }
+
     QOpenGLContext* prev_ctx     = nullptr;
     QSurface*       prev_surface = nullptr;
 
@@ -219,14 +228,6 @@ uint GlExtra::genExTexture(ExHandle& handle) {
         prev_ctx     = QOpenGLContext::currentContext();
         prev_surface = prev_ctx ? prev_ctx->surface() : nullptr;
         m_shared_ctx->makeCurrent(m_surface);
-    }
-
-    // Import takes ownership of the fd, so dup it: the ExHandle's fd is owned by
-    // the swapchain and may be imported by several screens (mirroring).
-    int dupfd = ::dup(handle.fd);
-    if (dupfd < 0) {
-        LOG_ERROR("gl: failed to dup ExHandle fd %d", handle.fd);
-        return 0;
     }
 
     uint memobject, tex;

@@ -117,19 +117,36 @@ ColumnLayout {
     WallpaperSyncBus {
         id: syncBus
     }
+    // Wallpaper selection as it was when the dialog opened; used so that pressing
+    // Apply for an unrelated setting in Global Mode doesn't push this screen's
+    // (possibly stale) per-screen wallpaper back into the shared global config.
+    property string initialWallpaperSource
+    property string initialWallpaperWorkShopId
+    Component.onCompleted: {
+        initialWallpaperSource = cfg_WallpaperSource;
+        initialWallpaperWorkShopId = cfg_WallpaperWorkShopId;
+    }
+
     function saveConfig() {
         wallpaperPage.saveConfig();
         globalCfg.enabled = cfg_GlobalMode;
         if(cfg_GlobalMode) {
-            globalCfg.setBatch({
-                "WallpaperSource":     cfg_WallpaperSource,
-                "WallpaperWorkShopId": cfg_WallpaperWorkShopId,
+            const batch = {
                 "RandomizeWallpaper":  cfg_RandomizeWallpaper,
                 "SwitchTimer":         cfg_SwitchTimer,
                 "NoRandomWhilePaused": cfg_NoRandomWhilePaused,
                 "FilterStr":           cfg_FilterStr,
                 "SortMode":            cfg_SortMode
-            });
+            };
+            // Only sync the wallpaper itself if the user actually changed the
+            // selection this session, so we never overwrite the shared wallpaper
+            // with a stale per-screen value.
+            if(cfg_WallpaperSource !== initialWallpaperSource
+                || cfg_WallpaperWorkShopId !== initialWallpaperWorkShopId) {
+                batch["WallpaperSource"] = cfg_WallpaperSource;
+                batch["WallpaperWorkShopId"] = cfg_WallpaperWorkShopId;
+            }
+            globalCfg.setBatch(batch);
         }
         syncBus.broadcastGlobalChanged();
     }

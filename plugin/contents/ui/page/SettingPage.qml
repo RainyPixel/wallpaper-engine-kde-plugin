@@ -133,9 +133,10 @@ Flickable {
                 }
             }
             OptionItem {
+                // Independent of "pause on battery power": the runtime applies this
+                // threshold on its own (0 = off), so keep it reachable to reset.
                 text: 'Pause if battery level is below'
                 text_color: Kirigami.Theme.textColor
-                visible: chkbox_pauseOnBatPower.checked
                 actor: RowLayout {
                     SpinBox {
                         id: spin_pauseBatPercent

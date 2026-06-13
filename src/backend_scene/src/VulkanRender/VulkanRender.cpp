@@ -299,7 +299,12 @@ void VulkanRender::Impl::destroy() {
     glslang::FinalizeProcess();
 
     if (m_gpu && device().handle()) {
-        VVK_CHECK(device().handle().WaitIdle());
+        // vkDeviceWaitIdle needs external sync against all queue users; on a shared
+        // device another screen may still be submitting, so take the same mutex.
+        {
+            std::lock_guard<std::mutex> lk(device().queue_mutex());
+            VVK_CHECK(device().handle().WaitIdle());
+        }
 
         // If we were a mirror primary, release the group so secondaries re-elect.
         releaseMirror();

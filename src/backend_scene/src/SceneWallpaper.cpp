@@ -221,6 +221,9 @@ private:
 
     void rebuildAndDecide() {
         if (! m_scene) return;
+        // Release the old passes/render targets/staging refs before allocating the
+        // replacement graph (same as the SET_SCENE path).
+        if (m_rg) m_render->clearLastRenderGraph();
         m_rg = sceneToRenderGraph(*m_scene);
         m_render->compileRenderGraph(*m_scene, *m_rg);
         m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
@@ -255,6 +258,9 @@ private:
                 m_render->releaseMirror();
                 rebuildAndDecide();
             } else {
+                // Keep this screen's scene clock advancing while mirroring so a
+                // later re-election doesn't restart a time-based wallpaper from ~0.
+                if (m_scene) m_scene->PassFrameTime(frame_timer.IdeaTime() * m_speed);
                 m_render->drawFrame(*m_scene);
             }
             frame_timer.FrameEnd();

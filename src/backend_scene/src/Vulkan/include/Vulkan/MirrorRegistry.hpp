@@ -9,6 +9,7 @@
 
 #include "Core/MapSet.hpp"
 #include "Vulkan/VulkanExSwapchain.hpp"
+#include "Vulkan/SharedGpuContext.hpp"
 
 namespace wallpaper
 {
@@ -29,8 +30,12 @@ enum class MirrorRole
 struct MirrorSlot {
     std::mutex                         mtx;
     std::shared_ptr<VulkanExSwapchain> swapchain; // null until the primary publishes
-    ScreenToken                        primary { 0 };
-    std::atomic<bool>                  primary_alive { true };
+    // The primary's GPU context owns the swapchain images/memory. Held here so it
+    // outlives the primary renderer while a secondary still displays its frames
+    // (matters when GPU sharing is off and the primary has a private device).
+    std::shared_ptr<SharedGpuContext> gpu;
+    ScreenToken                       primary { 0 };
+    std::atomic<bool>                 primary_alive { true };
 };
 
 // Process-global registry of mirror groups keyed by a render-identity string
@@ -46,8 +51,9 @@ public:
     std::pair<MirrorRole, std::shared_ptr<MirrorSlot>> acquire(const std::string& key,
                                                                ScreenToken        token);
 
-    // Primary publishes its swapchain into the slot once it has been created.
-    void publish(const std::shared_ptr<MirrorSlot>& slot, std::shared_ptr<VulkanExSwapchain> sc);
+    // Primary publishes its swapchain (and the context owning it) into the slot.
+    void publish(const std::shared_ptr<MirrorSlot>& slot, std::shared_ptr<VulkanExSwapchain> sc,
+                 std::shared_ptr<SharedGpuContext> gpu);
 
     // Primary leaving (teardown or scene change): mark the group dead and drop the
     // key so surviving secondaries re-elect a new primary on their next tick.

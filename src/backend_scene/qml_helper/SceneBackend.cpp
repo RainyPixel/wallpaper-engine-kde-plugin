@@ -146,9 +146,13 @@ signals:
 
 public slots:
     void newTexture() {
-        if (! m_scene->inited() || m_scene->exSwapchain() == nullptr) return;
+        if (! m_scene->inited()) return;
+        // Hold a shared_ptr to the frame source for the whole eat: the render thread
+        // may re-elect and swap the mirror source while we read it.
+        auto swapchain = m_scene->currentSwapchain();
+        if (! swapchain) return;
 
-        wallpaper::ExHandle* exh = m_scene->exSwapchain()->eatFrame(m_last_frame_id);
+        wallpaper::ExHandle* exh = swapchain->eatFrame(m_last_frame_id);
         if (exh != nullptr) {
             int id = exh->id();
             if (texs_map.count(id) == 0) {

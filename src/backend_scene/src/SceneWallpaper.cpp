@@ -183,7 +183,8 @@ public:
         }
     }
 
-    ExSwapchain* exSwapchain() const { return m_render->exSwapchain(); }
+    ExSwapchain*                 exSwapchain() const { return m_render->exSwapchain(); }
+    std::shared_ptr<ExSwapchain> currentSwapchain() const { return m_render->currentSwapchain(); }
 
     void clearRedrawCallback() { m_render->clearRedrawCallback(); }
 
@@ -218,6 +219,23 @@ private:
                  (int)m_mirror);
     }
 
+    void rebuildAndDecide() {
+        if (! m_scene) return;
+        m_rg = sceneToRenderGraph(*m_scene);
+        m_render->compileRenderGraph(*m_scene, *m_rg);
+        m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+        decideFrameSource();
+    }
+
+    // A live change to a mirror-key input (fillmode/speed) must re-run the election:
+    // a mirroring secondary now differs from its primary and should render its own,
+    // and a primary's group must re-form under the new key.
+    void onMirrorKeyChanged() {
+        if (! (m_scene && renderInited() && MirrorEnabled(m_mirror_setting))) return;
+        m_render->releaseMirror();
+        rebuildAndDecide();
+    }
+
     MHANDLER_CMD(STOP) {
         bool stop { false };
         if (msg->findBool("value", &stop)) {
@@ -235,12 +253,7 @@ private:
                 // the first surviving screen for this group becomes the new primary.
                 LOG_INFO("mirror: primary gone, screen re-electing");
                 m_render->releaseMirror();
-                if (m_scene) {
-                    m_rg = sceneToRenderGraph(*m_scene);
-                    m_render->compileRenderGraph(*m_scene, *m_rg);
-                    m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
-                    decideFrameSource();
-                }
+                rebuildAndDecide();
             } else {
                 m_render->drawFrame(*m_scene);
             }
@@ -279,10 +292,13 @@ private:
     }
     MHANDLER_CMD(SET_FILLMODE) {
         int32_t value;
-        if (msg->findInt32("value", &value)) {
+        if (msg->findInt32("value", &value) && (FillMode)value != m_fillmode) {
             m_fillmode = (FillMode)value;
             if (m_scene && renderInited()) {
-                m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+                if (MirrorEnabled(m_mirror_setting))
+                    onMirrorKeyChanged();
+                else
+                    m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
             }
         }
     }
@@ -300,7 +316,13 @@ private:
             decideFrameSource();
         }
     }
-    MHANDLER_CMD(SET_SPEED) { msg->findFloat("value", &m_speed); }
+    MHANDLER_CMD(SET_SPEED) {
+        float v { 1.0f };
+        if (msg->findFloat("value", &v) && v != m_speed) {
+            m_speed = v;
+            onMirrorKeyChanged();
+        }
+    }
     MHANDLER_CMD(INIT_VULKAN) {
         std::shared_ptr<RenderInitInfo> info;
         if (msg->findObject("info", &info)) {
@@ -411,6 +433,10 @@ BASIC_TYPE(Object, std::shared_ptr<void>);
 
 ExSwapchain* SceneWallpaper::exSwapchain() const {
     return m_main_handler->renderHandler()->exSwapchain();
+}
+
+std::shared_ptr<ExSwapchain> SceneWallpaper::currentSwapchain() const {
+    return m_main_handler->renderHandler()->currentSwapchain();
 }
 
 void SceneWallpaper::clearRedrawCallback() {

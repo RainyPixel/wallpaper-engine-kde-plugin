@@ -28,9 +28,11 @@ std::pair<MirrorRole, std::shared_ptr<MirrorSlot>> MirrorRegistry::acquire(const
 }
 
 void MirrorRegistry::publish(const std::shared_ptr<MirrorSlot>& slot,
-                             std::shared_ptr<VulkanExSwapchain> sc) {
+                             std::shared_ptr<VulkanExSwapchain> sc,
+                             std::shared_ptr<SharedGpuContext>  gpu) {
     std::lock_guard<std::mutex> lk(slot->mtx);
     slot->swapchain = std::move(sc);
+    slot->gpu       = std::move(gpu);
 }
 
 void MirrorRegistry::release(const std::string& key, ScreenToken token) {

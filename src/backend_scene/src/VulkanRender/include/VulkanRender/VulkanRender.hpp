@@ -46,7 +46,11 @@ public:
     void releaseMirror();
 
     ExSwapchain* exSwapchain() const;
-    bool         inited() const;
+    // Thread-safe shared_ptr snapshot of the live frame source (own or mirrored);
+    // the consumer should hold this across eatFrame() to avoid a use-after-free if
+    // the render thread re-elects mid-frame.
+    std::shared_ptr<ExSwapchain> currentSwapchain() const;
+    bool                         inited() const;
 
     // Synchronously stops the per-frame redraw callback from firing again. Called
     // from the QML render thread when the texture node is destroyed, so the render

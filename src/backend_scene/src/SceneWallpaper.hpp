@@ -47,6 +47,8 @@ public:
     void setPropertyObject(std::string_view, std::shared_ptr<void>);
 
     ExSwapchain* exSwapchain() const;
+    // Thread-safe snapshot of the current frame source; hold it across eatFrame().
+    std::shared_ptr<ExSwapchain> currentSwapchain() const;
 
     // Stops the render loop from invoking its redraw callback; call before the
     // owning texture node is destroyed (teardown ordering).

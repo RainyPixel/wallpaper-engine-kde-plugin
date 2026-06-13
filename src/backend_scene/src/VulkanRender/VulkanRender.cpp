@@ -76,9 +76,10 @@ struct VulkanRender::Impl {
     bool mirrorLost() const {
         return m_mirror && m_mirror_slot && ! m_mirror_slot->primary_alive.load();
     }
-    void releaseMirror();
-    void ensureSwapchain();
-    void bindMirrorSource();
+    void                                    releaseMirror();
+    void                                    ensureSwapchain();
+    void                                    bindMirrorSource();
+    std::shared_ptr<wallpaper::ExSwapchain> currentSwapchain();
 
     void invokeRedraw() {
         std::lock_guard<std::mutex> lk(m_redraw_mtx);
@@ -128,6 +129,9 @@ struct VulkanRender::Impl {
     std::string                        m_mirror_key;
     std::shared_ptr<MirrorSlot>        m_mirror_slot;
     std::shared_ptr<VulkanExSwapchain> m_mirror_source;
+    // Guards m_mirror / m_mirror_source / m_ex_swapchain against the QML consumer
+    // thread reading them via currentSwapchain() while the render thread re-elects.
+    std::mutex m_mirror_mtx;
 
     std::vector<VulkanPass*> m_passes;
 };
@@ -157,6 +161,10 @@ void VulkanRender::releaseMirror() { pImpl->releaseMirror(); }
 wallpaper::ExSwapchain* VulkanRender::exSwapchain() const {
     return pImpl->m_mirror ? pImpl->m_mirror_source.get() : pImpl->m_ex_swapchain.get();
 };
+
+std::shared_ptr<wallpaper::ExSwapchain> VulkanRender::currentSwapchain() const {
+    return pImpl->currentSwapchain();
+}
 
 bool VulkanRender::Impl::init(RenderInitInfo info) {
     if (m_inited) return true;
@@ -565,21 +573,32 @@ void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
 
 void VulkanRender::Impl::ensureSwapchain() {
     if (m_ex_swapchain || m_with_surface) return;
-    m_ex_swapchain =
-        CreateExSwapchain(*m_rt_pool, m_out_extent.width, m_out_extent.height, m_ex_tiling);
-    if (! m_ex_swapchain) LOG_ERROR("failed to create ex-swapchain");
+    auto sc = CreateExSwapchain(*m_rt_pool, m_out_extent.width, m_out_extent.height, m_ex_tiling);
+    if (! sc) LOG_ERROR("failed to create ex-swapchain");
+    std::lock_guard<std::mutex> lk(m_mirror_mtx);
+    m_ex_swapchain = std::move(sc);
 }
 
 void VulkanRender::Impl::bindMirrorSource() {
     if (! m_mirror_slot) return;
-    std::lock_guard<std::mutex> lk(m_mirror_slot->mtx);
+    std::lock_guard<std::mutex> lk(m_mirror_mtx);
+    std::lock_guard<std::mutex> slk(m_mirror_slot->mtx);
     m_mirror_source = m_mirror_slot->swapchain;
+}
+
+// Snapshot the live frame source as a shared_ptr so the QML consumer keeps it (and
+// its memory) alive across exSwapchain()/eatFrame(), even if the render thread
+// re-elects and resets the mirror source meanwhile.
+std::shared_ptr<wallpaper::ExSwapchain> VulkanRender::Impl::currentSwapchain() {
+    std::lock_guard<std::mutex> lk(m_mirror_mtx);
+    return m_mirror ? m_mirror_source : m_ex_swapchain;
 }
 
 bool VulkanRender::Impl::beginFrameSource(const std::string& key) {
     m_mirror_key = key;
     if (key.empty()) {
         ensureSwapchain();
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
         m_mirror = false;
         return true;
     }
@@ -588,16 +607,20 @@ bool VulkanRender::Impl::beginFrameSource(const std::string& key) {
     m_mirror_slot     = slot;
     if (role == MirrorRole::Primary) {
         ensureSwapchain();
-        MirrorRegistry::Instance().publish(slot, m_ex_swapchain);
+        MirrorRegistry::Instance().publish(slot, m_ex_swapchain, m_gpu);
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
         m_mirror = false;
         return true;
     }
 
     // Secondary: drop the graph we built only to learn mouse-dependency, free our
     // own swapchain if any, and display the primary's frames instead.
-    m_mirror = true;
     clearLastRenderGraph();
-    m_ex_swapchain.reset();
+    {
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
+        m_mirror = true;
+        m_ex_swapchain.reset();
+    }
     bindMirrorSource();
     LOG_INFO("mirror: screen %llu mirrors group %s", (unsigned long long)m_token, key.c_str());
     return false;
@@ -608,9 +631,12 @@ void VulkanRender::Impl::releaseMirror() {
     if (! m_mirror && ! m_mirror_key.empty()) {
         MirrorRegistry::Instance().release(m_mirror_key, m_token);
     }
-    m_mirror = false;
+    {
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
+        m_mirror = false;
+        m_mirror_source.reset();
+    }
     m_mirror_slot.reset();
-    m_mirror_source.reset();
     m_mirror_key.clear();
 }
 

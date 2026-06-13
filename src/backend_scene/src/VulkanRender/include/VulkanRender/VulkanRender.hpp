@@ -48,6 +48,11 @@ public:
     ExSwapchain* exSwapchain() const;
     bool         inited() const;
 
+    // Synchronously stops the per-frame redraw callback from firing again. Called
+    // from the QML render thread when the texture node is destroyed, so the render
+    // loop never emits into a half-destroyed node during teardown.
+    void clearRedrawCallback();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> pImpl;

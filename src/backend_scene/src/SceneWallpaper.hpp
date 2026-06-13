@@ -48,6 +48,14 @@ public:
 
     ExSwapchain* exSwapchain() const;
 
+    // Stops the render loop from invoking its redraw callback; call before the
+    // owning texture node is destroyed (teardown ordering).
+    void clearRedrawCallback();
+
+    // Stops the frame timer and joins the render/main loops so no render-thread
+    // work runs during teardown. Called from texture-node destruction.
+    void stopRender();
+
 private:
     bool m_inited { false };
 

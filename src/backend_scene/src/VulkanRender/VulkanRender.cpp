@@ -80,6 +80,15 @@ struct VulkanRender::Impl {
     void ensureSwapchain();
     void bindMirrorSource();
 
+    void invokeRedraw() {
+        std::lock_guard<std::mutex> lk(m_redraw_mtx);
+        if (m_redraw_cb) m_redraw_cb();
+    }
+    void clearRedraw() {
+        std::lock_guard<std::mutex> lk(m_redraw_mtx);
+        m_redraw_cb = nullptr;
+    }
+
     std::shared_ptr<SharedGpuContext> m_gpu;
 
     Instance& instance() { return m_gpu->instance(); }
@@ -96,6 +105,7 @@ struct VulkanRender::Impl {
 
     std::unique_ptr<FinPass> m_testpass { nullptr };
     ReDrawCB                 m_redraw_cb;
+    std::mutex               m_redraw_mtx;
 
     std::unique_ptr<StagingBuffer> m_vertex_buf { nullptr };
     std::unique_ptr<StagingBuffer> m_dyn_buf { nullptr };
@@ -138,6 +148,7 @@ void VulkanRender::UpdateCameraFillMode(Scene& scene, wallpaper::FillMode fill) 
     pImpl->UpdateCameraFillMode(scene, fill);
 };
 
+void VulkanRender::clearRedrawCallback() { pImpl->clearRedraw(); }
 bool VulkanRender::beginFrameSource(const std::string& key) { return pImpl->beginFrameSource(key); }
 bool VulkanRender::isMirror() const { return pImpl->isMirror(); }
 bool VulkanRender::mirrorLost() const { return pImpl->mirrorLost(); }
@@ -338,7 +349,7 @@ void VulkanRender::Impl::drawFrame(Scene& scene) {
         // Secondary: don't render. Bind the primary's swapchain when ready and ask
         // the QML side to repaint so it picks up newly published frames.
         if (! m_mirror_source) bindMirrorSource();
-        if (m_redraw_cb) m_redraw_cb();
+        invokeRedraw();
         return;
     }
     if (! (m_inited && m_pass_loaded)) return;
@@ -361,7 +372,7 @@ void VulkanRender::Impl::drawFrame(Scene& scene) {
         drawFrameSwapchain();
     }
 
-    if (m_redraw_cb) m_redraw_cb();
+    invokeRedraw();
 
 #if ENABLE_RENDERDOC_API
     if (rdoc_api)

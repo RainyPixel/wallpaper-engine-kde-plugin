@@ -82,7 +82,13 @@ public:
 
 public:
     MainHandler();
-    virtual ~MainHandler() {};
+    virtual ~MainHandler();
+
+    // Quiesce the render thread: stop the frame timer, stop emitting redraws, and
+    // join both loops so no DRAW runs while the scene/device are torn down. Safe to
+    // call more than once. Called from the texture node teardown because at
+    // plasmashell exit the SceneObject (and thus this handler) is never destroyed.
+    void stopRender();
 
     bool init();
     auto renderHandler() const { return m_render_handler; }
@@ -177,6 +183,10 @@ public:
     }
 
     ExSwapchain* exSwapchain() const { return m_render->exSwapchain(); }
+
+    void clearRedrawCallback() { m_render->clearRedrawCallback(); }
+
+    void stopRendering() { frame_timer.Stop(); }
 
     bool renderInited() const { return m_render->inited(); }
 
@@ -320,6 +330,17 @@ private:
 
     std::atomic<std::array<float, 2>> m_mouse_pos { std::array { 0.5f, 0.5f } };
 };
+
+void MainHandler::stopRender() {
+    if (m_render_handler) {
+        m_render_handler->stopRendering();
+        m_render_handler->clearRedrawCallback();
+    }
+    if (m_render_loop) m_render_loop->stop();
+    if (m_main_loop) m_main_loop->stop();
+}
+
+MainHandler::~MainHandler() { stopRender(); }
 } // namespace wallpaper
 
 SceneWallpaper::SceneWallpaper(): m_main_handler(std::make_shared<MainHandler>()) {}
@@ -382,6 +403,12 @@ BASIC_TYPE(Object, std::shared_ptr<void>);
 ExSwapchain* SceneWallpaper::exSwapchain() const {
     return m_main_handler->renderHandler()->exSwapchain();
 }
+
+void SceneWallpaper::clearRedrawCallback() {
+    m_main_handler->renderHandler()->clearRedrawCallback();
+}
+
+void SceneWallpaper::stopRender() { m_main_handler->stopRender(); }
 
 MHANDLER_CMD_IMPL(MainHandler, LOAD_SCENE) {
     if (m_render_handler->renderInited()) {

@@ -93,6 +93,11 @@ public:
     }
 
     ~TextureNode() override {
+        // At plasmashell exit the SceneObject is leaked (its destructor never runs),
+        // so the render thread would keep running DRAW against torn-down GL/Vulkan
+        // state. The texture node IS destroyed on teardown, so stop and join the
+        // render loop here before this node and its resources go away.
+        m_scene->stopRender();
         for (auto& item : texs_map) {
             auto& exh = item.second;
             // close(exh.fd);

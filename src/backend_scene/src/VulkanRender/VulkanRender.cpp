@@ -7,9 +7,12 @@
 
 #include "Utils/Algorism.h"
 
+#include <cstdlib>
 #include <glslang/Public/ShaderLang.h>
 
 #include "Vulkan/Device.hpp"
+#include "Vulkan/SharedGpuContext.hpp"
+#include "Vulkan/MirrorRegistry.hpp"
 #include "Vulkan/TextureCache.hpp"
 #include "Vulkan/Swapchain.hpp"
 #include "Vulkan/VulkanExSwapchain.hpp"
@@ -24,6 +27,7 @@
 #include <cassert>
 #include <vector>
 #include <cstdint>
+#include <atomic>
 
 #if ENABLE_RENDERDOC_API
 #    include "RenderDoc.h"
@@ -67,14 +71,42 @@ struct VulkanRender::Impl {
     void drawFrameOffscreen();
     void setRenderTargetSize(Scene&, rg::RenderGraph&);
 
-    Instance                m_instance;
-    std::unique_ptr<Device> m_device;
+    bool beginFrameSource(const std::string& key);
+    bool isMirror() const { return m_mirror; }
+    bool mirrorLost() const {
+        return m_mirror && m_mirror_slot && ! m_mirror_slot->primary_alive.load();
+    }
+    void                                    releaseMirror();
+    void                                    ensureSwapchain();
+    void                                    bindMirrorSource();
+    std::shared_ptr<wallpaper::ExSwapchain> currentSwapchain();
+
+    void invokeRedraw() {
+        std::lock_guard<std::mutex> lk(m_redraw_mtx);
+        if (m_redraw_cb) m_redraw_cb();
+    }
+    void clearRedraw() {
+        std::lock_guard<std::mutex> lk(m_redraw_mtx);
+        m_redraw_cb = nullptr;
+    }
+
+    std::shared_ptr<SharedGpuContext> m_gpu;
+
+    Instance& instance() { return m_gpu->instance(); }
+    Device&   device() { return m_gpu->device(); }
+
+    // Per-screen command pool, render-target pool, output extent and token.
+    vvk::CommandPool              m_cmd_pool;
+    std::unique_ptr<TextureCache> m_rt_pool;
+    VkExtent2D                    m_out_extent { 1, 1 };
+    ScreenToken                   m_token { 0 };
 
     std::unique_ptr<PrePass> m_prepass { nullptr };
     std::unique_ptr<FinPass> m_finpass { nullptr };
 
     std::unique_ptr<FinPass> m_testpass { nullptr };
     ReDrawCB                 m_redraw_cb;
+    std::mutex               m_redraw_mtx;
 
     std::unique_ptr<StagingBuffer> m_vertex_buf { nullptr };
     std::unique_ptr<StagingBuffer> m_dyn_buf { nullptr };
@@ -87,8 +119,19 @@ struct VulkanRender::Impl {
     bool m_inited { false };
     bool m_pass_loaded { false };
 
-    std::unique_ptr<VulkanExSwapchain> m_ex_swapchain;
+    VkImageTiling                      m_ex_tiling { VK_IMAGE_TILING_OPTIMAL };
+    std::shared_ptr<VulkanExSwapchain> m_ex_swapchain;
     RenderingResources                 m_rendering_resources;
+
+    // Mirror state: a secondary screen does not render; it displays the primary's
+    // swapchain (m_mirror_source) shared through m_mirror_slot.
+    bool                               m_mirror { false };
+    std::string                        m_mirror_key;
+    std::shared_ptr<MirrorSlot>        m_mirror_slot;
+    std::shared_ptr<VulkanExSwapchain> m_mirror_source;
+    // Guards m_mirror / m_mirror_source / m_ex_swapchain against the QML consumer
+    // thread reading them via currentSwapchain() while the render thread re-elects.
+    std::mutex m_mirror_mtx;
 
     std::vector<VulkanPass*> m_passes;
 };
@@ -109,7 +152,19 @@ void VulkanRender::UpdateCameraFillMode(Scene& scene, wallpaper::FillMode fill) 
     pImpl->UpdateCameraFillMode(scene, fill);
 };
 
-wallpaper::ExSwapchain* VulkanRender::exSwapchain() const { return pImpl->m_ex_swapchain.get(); };
+void VulkanRender::clearRedrawCallback() { pImpl->clearRedraw(); }
+bool VulkanRender::beginFrameSource(const std::string& key) { return pImpl->beginFrameSource(key); }
+bool VulkanRender::isMirror() const { return pImpl->isMirror(); }
+bool VulkanRender::mirrorLost() const { return pImpl->mirrorLost(); }
+void VulkanRender::releaseMirror() { pImpl->releaseMirror(); }
+
+wallpaper::ExSwapchain* VulkanRender::exSwapchain() const {
+    return pImpl->m_mirror ? pImpl->m_mirror_source.get() : pImpl->m_ex_swapchain.get();
+};
+
+std::shared_ptr<wallpaper::ExSwapchain> VulkanRender::currentSwapchain() const {
+    return pImpl->currentSwapchain();
+}
 
 bool VulkanRender::Impl::init(RenderInitInfo info) {
     if (m_inited) return true;
@@ -142,46 +197,45 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
         LOG_INFO("vulkan valid layer \"%s\" enabled", VALIDATION_LAYER_NAME.data());
     }
 
-    if (! Instance::Create(m_instance, inst_exts, inst_layers)) {
-        LOG_ERROR("init vulkan failed");
+    m_with_surface = ! info.offscreen;
+
+    GpuContextCreateInfo ci {
+        .inst_exts          = inst_exts,
+        .inst_layers        = inst_layers,
+        .device_exts        = device_exts,
+        .extent             = extent,
+        .uuid               = info.uuid,
+        .offscreen          = info.offscreen,
+        .share_enabled      = info.share_gpu,
+        .enable_valid_layer = info.enable_valid_layer,
+    };
+    if (! info.offscreen) ci.create_surface = info.surface_info.createSurfaceOp;
+
+    m_gpu = AcquireGpuContext(ci);
+    if (! m_gpu) {
+        LOG_ERROR("init vulkan gpu context failed");
         return false;
     }
-    if (! info.offscreen) {
-        VkSurfaceKHR surface;
-        VVK_CHECK_ACT(
-            {
-                LOG_ERROR("create vulkan surface failed");
-                return false;
-            },
-            info.surface_info.createSurfaceOp(*m_instance.inst(), &surface));
-        m_instance.setSurface(VkSurfaceKHR(surface));
-        m_with_surface = true;
-    }
+
+    static std::atomic<ScreenToken> s_next_token { 1 };
+    m_token      = s_next_token++;
+    m_out_extent = extent;
+
     {
-        auto surface   = *m_instance.surface();
-        auto check_gpu = [&device_exts, surface](const vvk::PhysicalDevice& gpu) {
-            return Device::CheckGPU(gpu, device_exts, surface);
+        VkCommandPoolCreateInfo pool_info {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = device().graphics_queue().family_index,
         };
-        if (! m_instance.ChoosePhysicalDevice(check_gpu, info.uuid)) return false;
+        VVK_CHECK_BOOL_RE(device().handle().CreateCommandPool(pool_info, m_cmd_pool));
     }
+    m_rt_pool = std::make_unique<TextureCache>(device(), m_cmd_pool);
 
-    {
-        m_device = std::make_unique<Device>();
-        if (! Device::Create(m_instance, device_exts, extent, *m_device)) {
-            LOG_ERROR("init vulkan device failed");
-            return false;
-        }
-    }
-
-    if (info.offscreen) {
-        m_ex_swapchain = CreateExSwapchain(*m_device,
-                                           extent.width,
-                                           extent.height,
-                                           (info.offscreen_tiling == TexTiling::OPTIMAL
-                                                ? VK_IMAGE_TILING_OPTIMAL
-                                                : VK_IMAGE_TILING_LINEAR));
-        m_with_surface = false;
-    }
+    // The offscreen swapchain is created lazily in beginFrameSource(): a screen
+    // that ends up mirroring another never allocates one.
+    m_ex_tiling = (info.offscreen_tiling == TexTiling::OPTIMAL ? VK_IMAGE_TILING_OPTIMAL
+                                                               : VK_IMAGE_TILING_LINEAR);
 
     if (! initRes()) return false;
 
@@ -196,26 +250,28 @@ bool VulkanRender::Impl::initRes() {
     m_prepass = std::make_unique<PrePass>(PrePass::Desc {});
     m_finpass = std::make_unique<FinPass>(FinPass::Desc {});
     if (m_with_surface) {
-        m_finpass->setPresentFormat(m_device->swapchain().format());
-        m_finpass->setPresentQueueIndex(m_device->present_queue().family_index);
+        m_finpass->setPresentFormat(device().swapchain().format());
+        m_finpass->setPresentQueueIndex(device().present_queue().family_index);
         m_finpass->setPresentLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     } else {
-        m_finpass->setPresentFormat(m_ex_swapchain->format());
+        // Offscreen present params are fixed (see VulkanExSwapchain::format); the
+        // swapchain itself may not exist yet when mirroring.
+        m_finpass->setPresentFormat(VK_FORMAT_R8G8B8A8_UNORM);
         m_finpass->setPresentLayout(VK_IMAGE_LAYOUT_GENERAL);
         m_finpass->setPresentQueueIndex(VK_QUEUE_FAMILY_EXTERNAL);
     }
     /*
     m_testpass = std::make_unique<FinPass>(FinPass::Desc{});
     m_testpass->setPresentFormat(m_ex_swapchain->format());
-    m_testpass->setPresentQueueIndex(m_device->graphics_queue().family_index);
+    m_testpass->setPresentQueueIndex(device().graphics_queue().family_index);
     m_testpass->setPresentLayout(vk::ImageLayout::ePresentSrcKHR);
     */
 
-    m_vertex_buf = std::make_unique<StagingBuffer>(*m_device,
+    m_vertex_buf = std::make_unique<StagingBuffer>(device(),
                                                    2 * 1024 * 1024,
                                                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                                                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    m_dyn_buf    = std::make_unique<StagingBuffer>(*m_device,
+    m_dyn_buf    = std::make_unique<StagingBuffer>(device(),
                                                 2 * 1024 * 1024,
                                                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                                                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
@@ -223,10 +279,10 @@ bool VulkanRender::Impl::initRes() {
     if (! m_vertex_buf->allocate()) return false;
     if (! m_dyn_buf->allocate()) return false;
     {
-        auto& pool = m_device->cmd_pool();
+        auto& pool = m_cmd_pool;
         VVK_CHECK_BOOL_RE(pool.Allocate(vk_command_num, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_cmds));
-        m_upload_cmd = vvk::CommandBuffer(m_cmds[0], m_device->handle().Dispatch());
-        m_render_cmd = vvk::CommandBuffer(m_cmds[1], m_device->handle().Dispatch());
+        m_upload_cmd = vvk::CommandBuffer(m_cmds[0], device().handle().Dispatch());
+        m_render_cmd = vvk::CommandBuffer(m_cmds[1], device().handle().Dispatch());
     }
     if (! CreateRenderingResource(m_rendering_resources)) return false;
 
@@ -242,24 +298,38 @@ void VulkanRender::Impl::destroy() {
     // Finalize glslang (paired with InitializeProcess in init)
     glslang::FinalizeProcess();
 
-    if (m_device && m_device->handle()) {
-        VVK_CHECK(m_device->handle().WaitIdle());
+    if (m_gpu && device().handle()) {
+        // vkDeviceWaitIdle needs external sync against all queue users; on a shared
+        // device another screen may still be submitting, so take the same mutex.
+        {
+            std::lock_guard<std::mutex> lk(device().queue_mutex());
+            VVK_CHECK(device().handle().WaitIdle());
+        }
+
+        // If we were a mirror primary, release the group so secondaries re-elect.
+        releaseMirror();
 
         // res
         for (auto& p : m_passes) {
-            p->destory(*m_device, m_rendering_resources);
+            p->destory(device(), m_rendering_resources);
         }
         m_vertex_buf->destroy();
         m_dyn_buf->destroy();
 
-        m_device->Destroy();
+        // Free this screen's GPU resources while the (possibly shared) device is
+        // still alive, then drop the asset references it held. A secondary still
+        // holding our swapchain keeps it alive via shared_ptr.
+        m_ex_swapchain.reset();
+        m_rt_pool.reset();
+        device().asset_cache().ReleaseScreen(m_token);
     }
-    m_instance.Destroy();
+    // The shared context tears the instance/device down once the last screen
+    // releases it; member destruction order keeps m_gpu alive until then.
 }
 
 bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
     rr.command = m_render_cmd;
-    VVK_CHECK_BOOL_RE(m_device->handle().CreateFence(
+    VVK_CHECK_BOOL_RE(device().handle().CreateFence(
         VkFenceCreateInfo {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .pNext = nullptr,
@@ -272,12 +342,14 @@ bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
     if (m_with_surface) {
         VkSemaphoreCreateInfo ci { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
                                    .pNext = nullptr };
-        VVK_CHECK_BOOL_RE(m_device->handle().CreateSemaphore(ci, rr.sem_swap_finish));
-        VVK_CHECK_BOOL_RE(m_device->handle().CreateSemaphore(ci, rr.sem_swap_wait_image));
+        VVK_CHECK_BOOL_RE(device().handle().CreateSemaphore(ci, rr.sem_swap_finish));
+        VVK_CHECK_BOOL_RE(device().handle().CreateSemaphore(ci, rr.sem_swap_wait_image));
     }
 
-    rr.vertex_buf = m_vertex_buf.get();
-    rr.dyn_buf    = m_dyn_buf.get();
+    rr.vertex_buf   = m_vertex_buf.get();
+    rr.dyn_buf      = m_dyn_buf.get();
+    rr.rt_pool      = m_rt_pool.get();
+    rr.screen_token = m_token;
     return true;
 }
 
@@ -286,28 +358,39 @@ void VulkanRender::Impl::DestroyRenderingResource(RenderingResources& rr) {}
 // VulkanExSwapchain* VulkanRender::exSwapchain() const { return m_ex_swapchain.get(); }
 
 void VulkanRender::Impl::drawFrame(Scene& scene) {
+    if (m_mirror) {
+        // Secondary: don't render. Bind the primary's swapchain when ready and ask
+        // the QML side to repaint so it picks up newly published frames.
+        if (! m_mirror_source) bindMirrorSource();
+        invokeRedraw();
+        return;
+    }
     if (! (m_inited && m_pass_loaded)) return;
 
-        // LOG_INFO("used ram: %fm", (m_device->GetUsage()/1024.0f)/1024.0f);
+    if (std::getenv("WP_VMA_LOG")) {
+        static int s_vma_frame = 0;
+        if ((s_vma_frame++ % 120) == 0)
+            LOG_INFO("VMA device-local usage: %.1f MiB", (device().GetUsage() / 1024.0) / 1024.0);
+    }
 
 #if ENABLE_RENDERDOC_API
     if (rdoc_api)
         rdoc_api->StartFrameCapture(
-            RENDERDOC_DEVICEPOINTER_FROM_VKINSTANCE((VkInstance)m_instance.inst()), NULL);
+            RENDERDOC_DEVICEPOINTER_FROM_VKINSTANCE((VkInstance)instance().inst()), NULL);
 #endif
 
-    if (m_instance.offscreen()) {
+    if (instance().offscreen()) {
         drawFrameOffscreen();
     } else {
         drawFrameSwapchain();
     }
 
-    if (m_redraw_cb) m_redraw_cb();
+    invokeRedraw();
 
 #if ENABLE_RENDERDOC_API
     if (rdoc_api)
         rdoc_api->EndFrameCapture(
-            RENDERDOC_DEVICEPOINTER_FROM_VKINSTANCE((VkInstance)m_instance.inst()), NULL);
+            RENDERDOC_DEVICEPOINTER_FROM_VKINSTANCE((VkInstance)instance().inst()), NULL);
 #endif
 }
 
@@ -318,13 +401,13 @@ void VulkanRender::Impl::drawFrameSwapchain() {
     resource_index         = (resource_index + 1) % 3;
     uint32_t image_index   = 0;
     {
-        VVK_CHECK_VOID_RE(m_device->handle().AcquireNextImageKHR(*m_device->swapchain().handle(),
-                                                                 vk_wait_time,
-                                                                 *rr.sem_swap_wait_image,
-                                                                 {},
-                                                                 &image_index));
+        VVK_CHECK_VOID_RE(device().handle().AcquireNextImageKHR(*device().swapchain().handle(),
+                                                                vk_wait_time,
+                                                                *rr.sem_swap_wait_image,
+                                                                {},
+                                                                &image_index));
     }
-    const auto& image = m_device->swapchain().images()[image_index];
+    const auto& image = device().swapchain().images()[image_index];
 
     m_finpass->setPresent(image);
 
@@ -336,7 +419,7 @@ void VulkanRender::Impl::drawFrameSwapchain() {
     m_dyn_buf->recordUpload(rr.command);
     for (auto* p : m_passes) {
         if (p->prepared()) {
-            p->execute(*m_device, rr);
+            p->execute(device(), rr);
         }
     }
     (void)rr.command.End();
@@ -354,17 +437,20 @@ void VulkanRender::Impl::drawFrameSwapchain() {
                 .pSignalSemaphores    = rr.sem_swap_finish.address(),
     };
 
-    VVK_CHECK_VOID_RE(m_device->present_queue().handle.Submit(sub_info, *rr.fence_frame));
     VkPresentInfoKHR present_info {
         .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext              = nullptr,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores    = rr.sem_swap_finish.address(),
         .swapchainCount     = 1,
-        .pSwapchains        = m_device->swapchain().handle().address(),
+        .pSwapchains        = device().swapchain().handle().address(),
         .pImageIndices      = &image_index,
     };
-    VVK_CHECK_VOID_RE(m_device->present_queue().handle.Present(present_info));
+    {
+        std::lock_guard<std::mutex> lk(device().queue_mutex());
+        VVK_CHECK_VOID_RE(device().present_queue().handle.Submit(sub_info, *rr.fence_frame));
+        VVK_CHECK_VOID_RE(device().present_queue().handle.Present(present_info));
+    }
 
     VVK_CHECK_VOID_RE(rr.fence_frame.Wait(vk_wait_time));
     VVK_CHECK_VOID_RE(rr.fence_frame.Reset());
@@ -384,7 +470,7 @@ void VulkanRender::Impl::drawFrameOffscreen() {
 
     for (auto* p : m_passes) {
         if (p->prepared()) {
-            p->execute(*m_device, rr);
+            p->execute(device(), rr);
         }
     }
 
@@ -396,7 +482,10 @@ void VulkanRender::Impl::drawFrameOffscreen() {
         .commandBufferCount = 1,
         .pCommandBuffers    = rr.command.address(),
     };
-    VVK_CHECK_VOID_RE(m_device->graphics_queue().handle.Submit(sub_info, *rr.fence_frame));
+    {
+        std::lock_guard<std::mutex> lk(device().queue_mutex());
+        VVK_CHECK_VOID_RE(device().graphics_queue().handle.Submit(sub_info, *rr.fence_frame));
+    }
 
     VVK_CHECK_VOID_RE(rr.fence_frame.Wait(vk_wait_time));
     VVK_CHECK_VOID_RE(rr.fence_frame.Reset());
@@ -404,7 +493,7 @@ void VulkanRender::Impl::drawFrameOffscreen() {
 }
 
 void VulkanRender::Impl::setRenderTargetSize(Scene& scene, rg::RenderGraph& rg) {
-    auto& ext = m_device->out_extent();
+    auto& ext = m_out_extent;
     for (auto& item : scene.renderTargets) {
         auto& rt = item.second;
         if (rt.bind.enable && rt.bind.screen) {
@@ -440,8 +529,8 @@ void VulkanRender::Impl::setRenderTargetSize(Scene& scene, rg::RenderGraph& rg) 
 void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
                                               wallpaper::FillMode fillmode) {
     using namespace wallpaper;
-    auto width  = m_device->out_extent().width;
-    auto height = m_device->out_extent().height;
+    auto width  = m_out_extent.width;
+    auto height = m_out_extent.height;
 
     if (width == 0) return;
     double sw = scene.ortho[0], sh = scene.ortho[1];
@@ -487,12 +576,84 @@ void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
     scene.UpdateLinkedCamera("global");
 }
 
+void VulkanRender::Impl::ensureSwapchain() {
+    if (m_ex_swapchain || m_with_surface) return;
+    auto sc = CreateExSwapchain(*m_rt_pool, m_out_extent.width, m_out_extent.height, m_ex_tiling);
+    if (! sc) LOG_ERROR("failed to create ex-swapchain");
+    std::lock_guard<std::mutex> lk(m_mirror_mtx);
+    m_ex_swapchain = std::move(sc);
+}
+
+void VulkanRender::Impl::bindMirrorSource() {
+    if (! m_mirror_slot) return;
+    std::lock_guard<std::mutex> lk(m_mirror_mtx);
+    std::lock_guard<std::mutex> slk(m_mirror_slot->mtx);
+    m_mirror_source = m_mirror_slot->swapchain;
+}
+
+// Snapshot the live frame source as a shared_ptr so the QML consumer keeps it (and
+// its memory) alive across exSwapchain()/eatFrame(), even if the render thread
+// re-elects and resets the mirror source meanwhile.
+std::shared_ptr<wallpaper::ExSwapchain> VulkanRender::Impl::currentSwapchain() {
+    std::lock_guard<std::mutex> lk(m_mirror_mtx);
+    return m_mirror ? m_mirror_source : m_ex_swapchain;
+}
+
+bool VulkanRender::Impl::beginFrameSource(const std::string& key) {
+    m_mirror_key = key;
+    if (key.empty()) {
+        ensureSwapchain();
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
+        m_mirror = false;
+        return true;
+    }
+
+    auto [role, slot] = MirrorRegistry::Instance().acquire(key, m_token);
+    m_mirror_slot     = slot;
+    if (role == MirrorRole::Primary) {
+        ensureSwapchain();
+        MirrorRegistry::Instance().publish(slot, m_ex_swapchain, m_gpu);
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
+        m_mirror = false;
+        return true;
+    }
+
+    // Secondary: drop the graph we built only to learn mouse-dependency, free our
+    // own swapchain if any, and display the primary's frames instead.
+    clearLastRenderGraph();
+    {
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
+        m_mirror = true;
+        m_ex_swapchain.reset();
+    }
+    bindMirrorSource();
+    LOG_INFO("mirror: screen %llu mirrors group %s", (unsigned long long)m_token, key.c_str());
+    return false;
+}
+
+void VulkanRender::Impl::releaseMirror() {
+    // Only a primary (rendered, non-empty key) owns the group registration.
+    if (! m_mirror && ! m_mirror_key.empty()) {
+        MirrorRegistry::Instance().release(m_mirror_key, m_token);
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_mirror_mtx);
+        m_mirror = false;
+        m_mirror_source.reset();
+    }
+    m_mirror_slot.reset();
+    m_mirror_key.clear();
+}
+
 void VulkanRender::Impl::clearLastRenderGraph() {
     for (auto& p : m_passes) {
-        p->destory(*m_device, m_rendering_resources);
+        p->destory(device(), m_rendering_resources);
     }
     m_passes.clear();
-    m_device->tex_cache().Clear();
+    // Drop only this screen's render targets and asset references; textures that
+    // other screens still hold survive.
+    m_rt_pool->Clear();
+    device().asset_cache().ReleaseScreen(m_token);
 
     m_vertex_buf->destroy();
     m_dyn_buf->destroy();
@@ -504,6 +665,10 @@ void VulkanRender::Impl::clearLastRenderGraph() {
 void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
     if (! m_inited) return;
     m_pass_loaded = false;
+
+    // static-pass caching is recomputed per graph build; env var force-disables it
+    scene.rt_frame_static.clear();
+    if (std::getenv("WP_NO_PASS_CACHE") != nullptr) scene.cache_passes = false;
 
     auto nodes             = rg.topologicalOrder();
     auto node_release_texs = rg.getLastReadTexs(nodes);
@@ -534,7 +699,7 @@ void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
 
     for (auto* p : m_passes) {
         if (! p->prepared()) {
-            p->prepare(scene, *m_device, m_rendering_resources);
+            p->prepare(scene, device(), m_rendering_resources);
         }
     }
 
@@ -548,7 +713,7 @@ void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
     {
         // Use fence instead of WaitIdle for better performance
         vvk::Fence upload_fence;
-        VVK_CHECK_VOID_RE(m_device->handle().CreateFence(
+        VVK_CHECK_VOID_RE(device().handle().CreateFence(
             VkFenceCreateInfo {
                 .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
                 .pNext = nullptr,
@@ -562,7 +727,10 @@ void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
             .commandBufferCount = 1,
             .pCommandBuffers    = m_upload_cmd.address(),
         };
-        VVK_CHECK_VOID_RE(m_device->graphics_queue().handle.Submit(sub_info, *upload_fence));
+        {
+            std::lock_guard<std::mutex> lk(device().queue_mutex());
+            VVK_CHECK_VOID_RE(device().graphics_queue().handle.Submit(sub_info, *upload_fence));
+        }
         VVK_CHECK_VOID_RE(upload_fence.Wait(vk_wait_time));
     }
     m_pass_loaded = true;

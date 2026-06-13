@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/NoCopyMove.hpp"
 #include "Vulkan/StagingBuffer.hpp"
+#include "Vulkan/TextureCache.hpp"
 #include <memory>
 
 namespace wallpaper
@@ -17,6 +18,10 @@ struct RenderingResources {
 
     StagingBuffer* vertex_buf;
     StagingBuffer* dyn_buf;
+
+    // Per-screen render-target pool and this screen's asset-cache token.
+    TextureCache* rt_pool { nullptr };
+    ScreenToken   screen_token { 0 };
 };
 } // namespace vulkan
 } // namespace wallpaper

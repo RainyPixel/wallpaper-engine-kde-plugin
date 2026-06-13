@@ -102,7 +102,6 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
     device.dld      = vvk::DeviceDispatch { inst.inst().Dispatch() };
     device.m_gpu    = inst.gpu();
     device.m_limits = inst.gpu().GetProperties().limits;
-    device.set_out_extent(extent);
 
     Set<std::string> tested_exts;
     {
@@ -157,19 +156,27 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
         allocatorInfo.instance               = *inst.inst();
         VVK_CHECK_BOOL_RE(vvk::CreateVmaAllocator(allocatorInfo, device.m_allocator));
     }
-    device.m_tex_cache = std::make_unique<TextureCache>(device);
+    device.m_asset_cache = std::make_unique<AssetCache>(device);
     return true;
 }
 
 VkDeviceSize Device::GetUsage() const {
-    VmaBudget budget;
-    vmaGetHeapBudgets(*m_allocator, &budget);
-    return budget.usage;
+    // vmaGetHeapBudgets writes one VmaBudget per memory heap, so the destination
+    // must be sized for every heap or it overruns the buffer.
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS] {};
+    vmaGetHeapBudgets(*m_allocator, budgets);
+
+    const VkPhysicalDeviceMemoryProperties mem = m_gpu.GetMemoryProperties().memoryProperties;
+    VkDeviceSize                           usage { 0 };
+    for (uint32_t i = 0; i < mem.memoryHeapCount; i++) {
+        if (mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) usage += budgets[i].usage;
+    }
+    return usage;
 }
 
 void Device::Destroy() { VVK_CHECK(m_device.WaitIdle()); }
 
-Device::Device(): m_tex_cache(std::make_unique<TextureCache>(*this)) {}
+Device::Device(): m_asset_cache(std::make_unique<AssetCache>(*this)) {}
 Device::~Device() {};
 
 bool Device::supportExt(std::string_view name) const { return exists(m_extensions, name); }

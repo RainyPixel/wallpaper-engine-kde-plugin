@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.5
 import org.kde.plasma.core 2.0 as PlasmaCore
 import org.kde.plasma.components 3.0 as PlasmaComponents
 import org.kde.kirigami 2.4 as Kirigami
+import com.github.catsout.wallpaperEngineKde
 
 import "page"
 
@@ -28,6 +29,9 @@ ColumnLayout {
     property alias  cfg_Fps:                 settingPage.cfg_Fps
     property alias  cfg_Volume:              settingPage.cfg_Volume
     property alias  cfg_MpvStats:            settingPage.cfg_MpvStats
+    property alias  cfg_SceneCachePasses:    settingPage.cfg_SceneCachePasses
+    property alias  cfg_ShareGpuContext:     settingPage.cfg_ShareGpuContext
+    property alias  cfg_MirrorScene:         settingPage.cfg_MirrorScene
     property alias  cfg_Speed:               settingPage.cfg_Speed
     property alias  cfg_MuteAudio:           settingPage.cfg_MuteAudio
     property alias  cfg_MouseInput:          settingPage.cfg_MouseInput
@@ -35,6 +39,7 @@ ColumnLayout {
     property alias  cfg_SwitchTimer:         settingPage.cfg_SwitchTimer
     property alias  cfg_RandomizeWallpaper:  settingPage.cfg_RandomizeWallpaper
     property alias  cfg_NoRandomWhilePaused: settingPage.cfg_NoRandomWhilePaused
+    property alias  cfg_GlobalMode:          settingPage.cfg_GlobalMode
     property alias  cfg_PauseFilterByScreen: settingPage.cfg_PauseFilterByScreen
     property alias  cfg_PauseOnBatPower:     settingPage.cfg_PauseOnBatPower
     property alias  cfg_PauseBatPercent:     settingPage.cfg_PauseBatPercent
@@ -104,8 +109,46 @@ ColumnLayout {
         `, this);
     }
 
+    // Global Mode: on Apply, push the shared keys into ~/.config/wekde/global.json
+    // and wake the running wallpaper(s) (the config dialog may be another process).
+    GlobalConfig {
+        id: globalCfg
+    }
+    WallpaperSyncBus {
+        id: syncBus
+    }
+    // Wallpaper selection as it was when the dialog opened; used so that pressing
+    // Apply for an unrelated setting in Global Mode doesn't push this screen's
+    // (possibly stale) per-screen wallpaper back into the shared global config.
+    property string initialWallpaperSource
+    property string initialWallpaperWorkShopId
+    Component.onCompleted: {
+        initialWallpaperSource = cfg_WallpaperSource;
+        initialWallpaperWorkShopId = cfg_WallpaperWorkShopId;
+    }
+
     function saveConfig() {
         wallpaperPage.saveConfig();
+        globalCfg.enabled = cfg_GlobalMode;
+        if(cfg_GlobalMode) {
+            const batch = {
+                "RandomizeWallpaper":  cfg_RandomizeWallpaper,
+                "SwitchTimer":         cfg_SwitchTimer,
+                "NoRandomWhilePaused": cfg_NoRandomWhilePaused,
+                "FilterStr":           cfg_FilterStr,
+                "SortMode":            cfg_SortMode
+            };
+            // Only sync the wallpaper itself if the user actually changed the
+            // selection this session, so we never overwrite the shared wallpaper
+            // with a stale per-screen value.
+            if(cfg_WallpaperSource !== initialWallpaperSource
+                || cfg_WallpaperWorkShopId !== initialWallpaperWorkShopId) {
+                batch["WallpaperSource"] = cfg_WallpaperSource;
+                batch["WallpaperWorkShopId"] = cfg_WallpaperWorkShopId;
+            }
+            globalCfg.setBatch(batch);
+        }
+        syncBus.broadcastGlobalChanged();
     }
 
     WallpaperListModel {

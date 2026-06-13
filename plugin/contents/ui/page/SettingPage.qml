@@ -10,6 +10,7 @@ import "../js/utils.mjs" as Utils
 import org.kde.plasma.core 2.0 as PlasmaCore
 import org.kde.plasma.components 3.0 as PlasmaComponents
 import org.kde.kirigami 2.6 as Kirigami
+import com.github.catsout.wallpaperEngineKde
 
 Flickable {
     id: settingTab
@@ -17,9 +18,16 @@ Flickable {
     // Наследуем тему от родителя
     Kirigami.Theme.inherit: true
 
+    GlobalConfig {
+        id: globalCfg
+    }
+
     property alias cfg_Fps: sliderFps.value
     property alias cfg_Volume: sliderVol.value
     property alias cfg_MpvStats: ckbox_mpvStats.checked
+    property alias cfg_SceneCachePasses: ckbox_cacheScenePasses.checked
+    property alias cfg_ShareGpuContext: ckbox_shareGpuContext.checked
+    property alias cfg_MirrorScene: ckbox_mirrorScene.checked
     property string cfg_MpvHwdec
     property alias cfg_Speed: spin_speed.dValue
     property alias cfg_MuteAudio: ckbox_muteAudio.checked
@@ -28,6 +36,7 @@ Flickable {
     property alias cfg_SwitchTimer: randomSpin.value
     property alias cfg_RandomizeWallpaper: ckbox_randomizeWallpaper.checked
     property alias cfg_NoRandomWhilePaused: ckbox_noRandomWhilePaused.checked
+    property alias cfg_GlobalMode: ckbox_globalMode.checked
     property alias cfg_PauseFilterByScreen: ckbox_pauseFilterByScreen.checked
 
     property alias cfg_PauseOnBatPower: chkbox_pauseOnBatPower.checked
@@ -102,10 +111,18 @@ Flickable {
                }
             }
             OptionItem {
-                text: 'Only check window on current screen'
+                text: 'Only react to windows on this screen'
                 text_color: Kirigami.Theme.textColor
                 actor: Switch {
                     id: ckbox_pauseFilterByScreen
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        color: Kirigami.Theme.disabledTextColor
+                        wrapMode: Text.Wrap
+                        text: "When pausing on focus/maximized windows, ignore windows on other screens"
+                    }
                 }
             }
             OptionItem {
@@ -116,13 +133,18 @@ Flickable {
                 }
             }
             OptionItem {
+                // Independent of "pause on battery power": the runtime applies this
+                // threshold on its own (0 = off), so keep it reachable to reset.
                 text: 'Pause if battery level is below'
                 text_color: Kirigami.Theme.textColor
-                actor: SpinBox {
+                actor: RowLayout {
+                    SpinBox {
                         id: spin_pauseBatPercent
                         from: 0
                         to: 100
                         stepSize: 1
+                    }
+                    Label { text: " %"; color: Kirigami.Theme.textColor }
                 }
             }
             OptionItem {
@@ -225,6 +247,24 @@ Flickable {
                             id: ckbox_noRandomWhilePaused
                         }
                     }
+                }
+            }
+
+            OptionItem {
+                text: 'Same wallpaper on all screens'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/window.svg'
+                actor: Switch {
+                    id: ckbox_globalMode
+                    // reflect the real shared state, not this screen's stale copy
+                    Component.onCompleted: checked = globalCfg.enabled
+                }
+                contentBottom: Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.disabledTextColor
+                    text: "Share the wallpaper choice and randomization across all screens "
+                        + "(one configuration for the whole system). Press Apply to take effect."
                 }
             }
 
@@ -387,6 +427,60 @@ Flickable {
                     }
                 }
 
+            }
+            OptionItem {
+                text: 'Cache static layers'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/tuning.svg'
+                actor: Switch {
+                    id: ckbox_cacheScenePasses
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        text: "Render unchanging layers (e.g. blurred backgrounds) once instead of "
+                            + "every frame. Saves CPU/GPU. Disable if a wallpaper looks wrong."
+                    }
+                }
+            }
+            OptionItem {
+                text: 'Share GPU across screens'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/tuning.svg'
+                actor: Switch {
+                    id: ckbox_shareGpuContext
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        text: "On multi-monitor setups, share one GPU device so identical "
+                            + "textures load once instead of per screen. Saves VRAM. "
+                            + "Takes effect after the wallpaper reloads."
+                    }
+                }
+            }
+            OptionItem {
+                text: 'Mirror scene across screens'
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/tuning.svg'
+                actor: Switch {
+                    id: ckbox_mirrorScene
+                }
+                contentBottom: ColumnLayout {
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        text: "On multi-monitor setups showing the same scene wallpaper, render "
+                            + "it once and mirror it to the other screens. Saves the per-screen "
+                            + "render-target VRAM. Skipped for wallpapers that react to the cursor. "
+                            + "Takes effect after the wallpaper reloads."
+                    }
+                }
             }
             OptionItem {
                 text: 'Shader cache'

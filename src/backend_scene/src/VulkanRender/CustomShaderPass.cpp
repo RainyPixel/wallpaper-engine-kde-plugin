@@ -111,32 +111,22 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         if (IsSpecTex(tex_name)) {
             if (scene.renderTargets.count(tex_name) == 0) continue;
             auto& rt  = scene.renderTargets.at(tex_name);
-            auto  opt = device.tex_cache().Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
+            auto  opt = rr.rt_pool->Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
             if (! opt.has_value()) continue;
             img_slots.slots = { opt.value() };
         } else {
             auto image = scene.imageParser->Parse(tex_name);
             if (image) {
-                img_slots = device.tex_cache().CreateTex(*image);
+                img_slots =
+                    device.asset_cache().CreateTexShared(*image, rr.screen_token, scene.scene_id);
             } else {
                 LOG_ERROR("parse tex \"%s\" failed", tex_name.c_str());
             }
         }
         m_desc.vk_textures[i] = img_slots;
     }
-    {
-        auto& tex_name = m_desc.output;
-        assert(IsSpecTex(tex_name));
-        assert(scene.renderTargets.count(tex_name) > 0);
-        auto& rt = scene.renderTargets.at(tex_name);
-        if (auto opt = device.tex_cache().Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
-            opt.has_value()) {
-            m_desc.vk_output = opt.value();
-        } else
-            return;
-    }
-
-    SceneMesh& mesh = *(m_desc.node->Mesh());
+    SceneMesh& mesh   = *(m_desc.node->Mesh());
+    m_desc.dyn_vertex = mesh.Dynamic();
 
     std::vector<Uni_ShaderSpv> spvs;
     DescriptorSetInfo          descriptor_info;
@@ -149,12 +139,16 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
             return;
         }
 
-        // Check if shader uses time-based uniforms (for caching optimization)
-        if (! ref.blocks.empty()) {
-            auto& block          = ref.blocks.front();
-            m_uses_time_uniforms = exists(block.member_map, G_TIME) ||
-                                   exists(block.member_map, G_DAYTIME) ||
-                                   exists(block.member_map, G_POINTERPOSITION);
+        // Whether the shader reads any per-frame-varying uniform; such a pass must
+        // not be cached as frame-static. Covers time, cursor/parallax, and puppet
+        // bones (driven by frameTime). Check every uniform block, not just the first.
+        for (auto& block : ref.blocks) {
+            if (exists(block.member_map, G_TIME) || exists(block.member_map, G_DAYTIME) ||
+                exists(block.member_map, G_POINTERPOSITION) ||
+                exists(block.member_map, G_PARALLAXPOSITION) || exists(block.member_map, G_BONES)) {
+                m_uses_time_uniforms = true;
+                break;
+            }
         }
 
         auto& bindings = descriptor_info.bindings;
@@ -182,6 +176,44 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
                 binding = (i32)ref.binding_map.at(WE_GLTEX_NAMES[i]).binding;
             m_desc.vk_tex_binding.push_back(binding);
         }
+    }
+
+    // Static-pass caching: a pass may be executed once and skipped afterwards
+    // when its output never changes. That holds when the pass is static (no
+    // dynamic geometry/sprites), independent of time/pointer uniforms, reads
+    // only frame-static inputs, and writes a dedicated reusable effect buffer
+    // (not the shared canvas, which PrePass clears every frame). prepare() runs
+    // in topological order, so input producers are recorded before consumers.
+    {
+        bool inputs_static = true;
+        for (auto& in_name : m_desc.textures) {
+            if (in_name.empty()) continue;
+            if (IsSpecTex(in_name)) {
+                auto it = scene.rt_frame_static.find(in_name);
+                if (it == scene.rt_frame_static.end() || ! it->second) {
+                    inputs_static = false;
+                    break;
+                }
+            }
+        }
+        auto& out_rt   = scene.renderTargets.at(m_desc.output);
+        m_frame_static = scene.cache_passes && isStatic() && ! m_uses_time_uniforms &&
+                         inputs_static && out_rt.allowReuse;
+        scene.rt_frame_static[m_desc.output] = m_frame_static;
+    }
+
+    {
+        auto& tex_name = m_desc.output;
+        assert(IsSpecTex(tex_name));
+        assert(scene.renderTargets.count(tex_name) > 0);
+        auto& rt = scene.renderTargets.at(tex_name);
+        // pin the output when caching so the pooled texture is never recycled
+        // and keeps holding the cached result (in SHADER_READ_ONLY) across frames
+        bool persist = m_frame_static || ! rt.allowReuse;
+        if (auto opt = rr.rt_pool->Query(tex_name, ToTexKey(rt), persist); opt.has_value()) {
+            m_desc.vk_output = opt.value();
+        } else
+            return;
     }
 
     m_desc.draw_count = 0;
@@ -391,15 +423,15 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         };
     }
     for (auto& tex : releaseTexs()) {
-        device.tex_cache().MarkShareReady(tex);
+        rr.rt_pool->MarkShareReady(tex);
     }
     setPrepared();
 }
 
 void CustomShaderPass::execute(const Device&, RenderingResources& rr) {
-    // NOTE: Pass caching disabled - output textures are not preserved between frames
-    // in current render graph implementation. Would need persistent render targets.
-    // if (isCacheable() && m_cached) { return; }
+    // Skip frame-static passes after their first execution: the output is pinned
+    // and already holds the result in SHADER_READ_ONLY for downstream passes.
+    if (m_frame_static && m_cached) return;
 
     if (m_desc.update_op) m_desc.update_op();
 
@@ -519,6 +551,8 @@ void CustomShaderPass::execute(const Device&, RenderingResources& rr) {
     }
 
     cmd.EndRenderPass();
+
+    if (m_frame_static) markCached();
 }
 
 void CustomShaderPass::destory(const Device&, RenderingResources& rr) {

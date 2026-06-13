@@ -1,6 +1,7 @@
 #include "glExtra.hpp"
 #include <glad/glad.h>
 #include <vector>
+#include <unistd.h>
 #include "Utils/Logging.h"
 
 #include <QtGui/QOpenGLContext>
@@ -210,6 +211,15 @@ uint GlExtra::genExTexture(ExHandle& handle) {
         return 0;
     }
 
+    // Import takes ownership of the fd, so dup it: the ExHandle's fd is owned by
+    // the swapchain and may be imported by several screens (mirroring). Done before
+    // the context switch so a failure here doesn't leave the wrong GL context current.
+    int dupfd = ::dup(handle.fd);
+    if (dupfd < 0) {
+        LOG_ERROR("gl: failed to dup ExHandle fd %d", handle.fd);
+        return 0;
+    }
+
     QOpenGLContext* prev_ctx     = nullptr;
     QSurface*       prev_surface = nullptr;
 
@@ -222,7 +232,7 @@ uint GlExtra::genExTexture(ExHandle& handle) {
 
     uint memobject, tex;
     glCreateMemoryObjectsEXT(1, &memobject);
-    glImportMemoryFdEXT(memobject, handle.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, handle.fd);
+    glImportMemoryFdEXT(memobject, handle.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, dupfd);
     // NVIDIA generates spurious GL_INVALID_ENUM here on both GL 3.2 and 4.x contexts.
     // Subsequent checks after glTexParameteri/glTexStorageMem2DEXT catch real errors.
     glGetError();
@@ -243,7 +253,6 @@ uint GlExtra::genExTexture(ExHandle& handle) {
     CHECK_GL_ERROR_IF_DEBUG()
 
     glBindTexture(GL_TEXTURE_2D, 0);
-    handle.fd = -1;
 
     // Switch back to Plasma context
     if (prev_ctx && prev_surface) {

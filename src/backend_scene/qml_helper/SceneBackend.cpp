@@ -75,10 +75,13 @@ class TextureNode : public QObject, public QSGSimpleTextureNode {
     Q_OBJECT
 public:
     typedef std::function<QSGTexture*(QQuickWindow*)> EatFrameOp;
-    TextureNode(QQuickWindow* window, sp_scene_t scene, bool valid, EatFrameOp eatFrameOp)
+    TextureNode(QQuickWindow* window, sp_scene_t scene, bool valid, bool share_gpu,
+                bool mirror_scene, EatFrameOp eatFrameOp)
         : m_texture(nullptr),
           m_scene(scene),
           m_enable_valid(valid),
+          m_share_gpu(share_gpu),
+          m_mirror_scene(mirror_scene),
           m_eatFrameOp(eatFrameOp),
           m_window(window),
           m_first_frame(false) {
@@ -91,6 +94,11 @@ public:
     }
 
     ~TextureNode() override {
+        // At plasmashell exit the SceneObject is leaked (its destructor never runs),
+        // so the render thread would keep running DRAW against torn-down GL/Vulkan
+        // state. The texture node IS destroyed on teardown, so stop and join the
+        // render loop here before this node and its resources go away.
+        m_scene->stopRender();
         for (auto& item : texs_map) {
             auto& exh = item.second;
             // close(exh.fd);
@@ -110,6 +118,8 @@ public:
         wallpaper::RenderInitInfo info;
         info.enable_valid_layer = m_enable_valid;
         info.offscreen          = true;
+        info.share_gpu          = m_share_gpu;
+        info.mirror_scene       = m_mirror_scene;
         info.offscreen_tiling   = m_glex.tiling();
         info.uuid               = m_glex.uuid();
         info.width              = w;
@@ -136,9 +146,13 @@ signals:
 
 public slots:
     void newTexture() {
-        if (! m_scene->inited() || m_scene->exSwapchain() == nullptr) return;
+        if (! m_scene->inited()) return;
+        // Hold a shared_ptr to the frame source for the whole eat: the render thread
+        // may re-elect and swap the mirror source while we read it.
+        auto swapchain = m_scene->currentSwapchain();
+        if (! swapchain) return;
 
-        wallpaper::ExHandle* exh = m_scene->exSwapchain()->eatFrame();
+        wallpaper::ExHandle* exh = swapchain->eatFrame(m_last_frame_id);
         if (exh != nullptr) {
             int id = exh->id();
             if (texs_map.count(id) == 0) {
@@ -147,13 +161,11 @@ public slots:
                         exh->height,
                         exh->fd);
                 ExTex ex_tex;
-                int   fd    = exh->fd;
                 uint  gltex = m_glex.genExTexture(*exh);
 
                 ex_tex.gltex = gltex;
                 ex_tex.qsg   = createTextureFromGl(gltex, QSize(exh->width, exh->height), m_window);
                 texs_map[id] = ex_tex;
-                close(fd);
             }
             auto& newtex = texs_map.at(id);
             if (newtex.qsg != nullptr)
@@ -175,12 +187,15 @@ public slots:
 private:
     sp_scene_t m_scene;
     bool       m_enable_valid;
+    bool       m_share_gpu;
+    bool       m_mirror_scene;
 
     QSGTexture*       m_init_texture;
     QSGTexture*       m_texture;
     EatFrameOp        m_eatFrameOp;
     QQuickWindow*     m_window;
     std::atomic<bool> m_first_frame;
+    std::uint64_t     m_last_frame_id { 0 };
 
     GlExtra m_glex;
 
@@ -212,9 +227,10 @@ void SceneObject::resizeFb() {
 QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
     TextureNode* node = static_cast<TextureNode*>(oldNode);
     if (! node) {
-        node = new TextureNode(window(), m_scene, m_enable_valid, [this](QQuickWindow* window) {
-            return (QSGTexture*)nullptr;
-        });
+        node = new TextureNode(
+            window(), m_scene, m_enable_valid, m_share_gpu, m_mirror_scene, [this](QQuickWindow*) {
+                return (QSGTexture*)nullptr;
+            });
         if (node->initGl()) {
             node->initVulkan(width() * window()->devicePixelRatio(),
                              height() * window()->devicePixelRatio());
@@ -292,6 +308,25 @@ void SceneObject::setMuted(bool value) {
     if (m_muted == value) return;
     m_muted = value;
     SET_PROPERTY(Bool, wallpaper::PROPERTY_MUTED, value);
+}
+
+bool SceneObject::cachePasses() const { return m_cachePasses; }
+void SceneObject::setCachePasses(bool value) {
+    if (m_cachePasses == value) return;
+    m_cachePasses = value;
+    SET_PROPERTY(Bool, wallpaper::PROPERTY_CACHE_PASSES, value);
+}
+
+bool SceneObject::shareGpu() const { return m_share_gpu; }
+void SceneObject::setShareGpu(bool value) {
+    // Consumed when the render node is created; takes effect on next load.
+    m_share_gpu = value;
+}
+
+bool SceneObject::mirrorScene() const { return m_mirror_scene; }
+void SceneObject::setMirrorScene(bool value) {
+    // Consumed when the render node is created; takes effect on next load.
+    m_mirror_scene = value;
 }
 
 QString SceneObject::userProperties() const { return m_userProperties; }

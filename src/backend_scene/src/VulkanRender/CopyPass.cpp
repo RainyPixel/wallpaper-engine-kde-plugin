@@ -31,7 +31,7 @@ void CopyPass::prepare(Scene& scene, const Device& device, RenderingResources& r
         ImageParameters img;
         if (IsSpecTex(tex_name)) {
             auto& rt  = scene.renderTargets.at(tex_name);
-            auto  opt = device.tex_cache().Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
+            auto  opt = rr.rt_pool->Query(tex_name, ToTexKey(rt), ! rt.allowReuse);
             if (opt.has_value())
                 img = opt.value();
             else
@@ -44,7 +44,7 @@ void CopyPass::prepare(Scene& scene, const Device& device, RenderingResources& r
     }
 
     for (auto& tex : releaseTexs()) {
-        device.tex_cache().MarkShareReady(tex);
+        rr.rt_pool->MarkShareReady(tex);
     }
 
     setPrepared();
@@ -149,7 +149,7 @@ void CopyPass::execute(const Device& device, RenderingResources& rr) {
     }
 
     if (dst.mipmap_level > 1) {
-        device.tex_cache().RecGenerateMipmaps(cmd, dst);
+        rr.rt_pool->RecGenerateMipmaps(cmd, dst);
     }
 };
 void CopyPass::destory(const Device&, RenderingResources&) {}

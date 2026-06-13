@@ -411,15 +411,46 @@ std::optional<ExImageParameters> TextureCache::CreateExTex(uint32_t width, uint3
         const auto& eximg = opt.value();
 
         if (! m_tex_cmd) allocateCmd();
+        std::lock_guard<std::mutex> lk(m_device.queue_mutex());
         TransImgLayout(m_device.graphics_queue().handle, m_tex_cmd, eximg, VK_IMAGE_LAYOUT_GENERAL);
         VVK_CHECK(m_device.handle().WaitIdle());
     }
     return opt;
 }
 
-ImageSlotsRef TextureCache::CreateTex(Image& image) {
-    if (exists(m_tex_map, image.key)) {
-        return m_tex_map.at(image.key);
+AssetCache::AssetCache(const Device& device): m_device(device) {}
+AssetCache::~AssetCache() {}
+
+void AssetCache::allocateCmd() {
+    const auto& pool = m_device.cmd_pool();
+    VVK_CHECK(pool.Allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_tex_cmds));
+    m_tex_cmd = vvk::CommandBuffer(m_tex_cmds[0], m_device.handle().Dispatch());
+}
+
+void AssetCache::ReleaseScreen(ScreenToken who) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    for (auto it = m_tex_map.begin(); it != m_tex_map.end();) {
+        it->second.holders.erase(who);
+        if (it->second.holders.empty())
+            it = m_tex_map.erase(it);
+        else
+            ++it;
+    }
+}
+
+ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who, std::string_view ns) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+
+    // Namespace the cache key by the wallpaper identity: this cache is shared
+    // across screens on the same GPU, and image.key is only a per-package relative
+    // texture name, so two different wallpapers could otherwise collide on a same
+    // name and reuse each other's GPU image.
+    const std::string key = std::string(ns) + '|' + image.key;
+
+    if (exists(m_tex_map, key)) {
+        auto& entry = m_tex_map.at(key);
+        entry.holders.insert(who);
+        return entry.slots;
     }
 
     ImageSlots img_slots;
@@ -486,24 +517,28 @@ ImageSlotsRef TextureCache::CreateTex(Image& image) {
             extents.push_back(VkExtent3D { (u32)image_data.width, (u32)image_data.height, 1 });
         }
 
-        CopyImageData(transform<VmaBufferParameters>(stage_bufs,
-                                                     [](BufferParameters e) {
-                                                         return e;
-                                                     }),
-                      extents,
-                      m_device.graphics_queue().handle,
-                      m_tex_cmd,
-                      image_paras);
+        {
+            std::lock_guard<std::mutex> lk(m_device.queue_mutex());
+            CopyImageData(transform<VmaBufferParameters>(stage_bufs,
+                                                         [](BufferParameters e) {
+                                                             return e;
+                                                         }),
+                          extents,
+                          m_device.graphics_queue().handle,
+                          m_tex_cmd,
+                          image_paras);
 
-        m_device.handle().WaitIdle();
+            m_device.handle().WaitIdle();
+        }
     }
-    m_tex_map[image.key] = std::move(img_slots);
-    return m_tex_map[image.key];
+    auto& entry = m_tex_map[key];
+    entry.slots = std::move(img_slots);
+    entry.holders.insert(who);
+    return entry.slots;
 }
 
 void TextureCache::allocateCmd() {
-    const auto& pool = m_device.cmd_pool();
-    VVK_CHECK(pool.Allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_tex_cmds));
+    VVK_CHECK(m_cmd_pool.Allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, m_tex_cmds));
     m_tex_cmd = vvk::CommandBuffer(m_tex_cmds[0], m_device.handle().Dispatch());
 }
 
@@ -528,23 +563,25 @@ std::optional<VmaImageParameters> TextureCache::CreateTex(TextureKey tex_key) {
             break;
 
         if (! m_tex_cmd) allocateCmd();
-        TransImgLayout(m_device.graphics_queue().handle,
-                       m_tex_cmd,
-                       image_paras,
-                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-        VVK_CHECK_ACT(break, m_device.handle().WaitIdle());
+        {
+            std::lock_guard<std::mutex> lk(m_device.queue_mutex());
+            TransImgLayout(m_device.graphics_queue().handle,
+                           m_tex_cmd,
+                           image_paras,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            VVK_CHECK_ACT(break, m_device.handle().WaitIdle());
+        }
         return image_paras;
     } while (false);
     return std::nullopt;
 }
 
-TextureCache::TextureCache(const Device& device): m_device(device) {}
+TextureCache::TextureCache(const Device& device, const vvk::CommandPool& cmd_pool)
+    : m_device(device), m_cmd_pool(cmd_pool) {}
 
 TextureCache::~TextureCache() {};
 
 void TextureCache::Clear() {
-    m_tex_map.clear();
     m_query_texs.clear();
     m_query_map.clear();
 }

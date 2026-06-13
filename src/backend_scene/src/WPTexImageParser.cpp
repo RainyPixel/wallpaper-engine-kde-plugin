@@ -111,7 +111,9 @@ void LoadHeader(fs::IBinaryStream& file, ImageHeader& header) {
 
     header.count = file.ReadInt32();
 
-    if (header.extraHeader["texb"].val == 3) header.type = static_cast<ImageType>(file.ReadInt32());
+    if (header.extraHeader["texb"].val >= 3) header.type = static_cast<ImageType>(file.ReadInt32());
+    // TEXB0004 stores an additional int field after the image format
+    if (header.extraHeader["texb"].val >= 4) file.ReadInt32();
 }
 
 void SetHeaderPow2(ImageHeader& header, i32 mip_0_w, i32 mip_0_h) {
@@ -170,14 +172,26 @@ std::shared_ptr<Image> WPTexImageParser::Parse(const std::string& name) {
     auto&                  img     = *img_ptr;
     img.key                        = name;
     auto pfile                     = m_vfs->Open(path);
-    if (! pfile) return nullptr;
+    if (! pfile) {
+        LOG_ERROR("open tex \"%s\" failed", path.c_str());
+        return nullptr;
+    }
     auto& file     = *pfile;
     auto  startpos = file.Tell();
     LoadHeader(file, img.header);
 
     // image
     i32 _image_count = img.header.count;
-    if (_image_count < 0) return nullptr;
+    if (_image_count < 0) {
+        LOG_ERROR("invalid tex \"%s\": count=%d texv=%d texi=%d texb=%d (header layout "
+                  "unsupported?)",
+                  name.c_str(),
+                  _image_count,
+                  (int)img.header.extraHeader["texv"].val,
+                  (int)img.header.extraHeader["texi"].val,
+                  (int)img.header.extraHeader["texb"].val);
+        return nullptr;
+    }
     usize image_count = (usize)_image_count;
 
     img.slots.resize(image_count);
@@ -207,8 +221,19 @@ std::shared_ptr<Image> WPTexImageParser::Parse(const std::string& name) {
             }
 
             i32 src_size = file.ReadInt32();
-            if (src_size <= 0 || mipmap.width <= 0 || mipmap.height <= 0 || decompressed_size < 0)
+            if (src_size <= 0 || mipmap.width <= 0 || mipmap.height <= 0 || decompressed_size < 0) {
+                LOG_ERROR("invalid tex \"%s\" mipmap %zu/%zu: width=%d height=%d src_size=%d "
+                          "decompressed_size=%d texb=%d",
+                          name.c_str(),
+                          i_mipmap,
+                          i_image,
+                          mipmap.width,
+                          mipmap.height,
+                          src_size,
+                          decompressed_size,
+                          (int)img.header.extraHeader["texb"].val);
                 return nullptr;
+            }
 
             char* result;
             result = new char[(usize)src_size];
@@ -228,10 +253,17 @@ std::shared_ptr<Image> WPTexImageParser::Parse(const std::string& name) {
                 }
             }
             // is image container
-            if (img.header.extraHeader["texb"].val == 3 && img.header.type != ImageType::UNKNOWN) {
+            if (img.header.extraHeader["texb"].val >= 3 && img.header.type != ImageType::UNKNOWN) {
                 int32_t w, h, n;
                 auto*   data =
                     stbi_load_from_memory((const unsigned char*)result, src_size, &w, &h, &n, 4);
+                if (data == nullptr) {
+                    LOG_ERROR("decode image container of tex \"%s\" failed: %s",
+                              name.c_str(),
+                              stbi_failure_reason());
+                    delete[] result;
+                    return nullptr;
+                }
                 mipmap.data = ImageDataPtr((uint8_t*)data, [](uint8_t* data) {
                     stbi_image_free((unsigned char*)data);
                 });

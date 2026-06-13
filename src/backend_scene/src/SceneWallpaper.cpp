@@ -23,6 +23,7 @@
 #include "VulkanRender/SceneToRenderGraph.hpp"
 #include "VulkanRender/VulkanRender.hpp"
 #include <atomic>
+#include <sstream>
 
 using namespace wallpaper;
 
@@ -35,6 +36,23 @@ using namespace wallpaper;
 
 namespace
 {
+// The WP_MIRROR env var overrides the per-wallpaper setting (0 forces off).
+bool MirrorEnabled(bool requested) {
+    if (const char* e = std::getenv("WP_MIRROR")) return e[0] != '0' && e[0] != '\0';
+    return requested;
+}
+
+std::string UuidHex(std::span<const std::uint8_t> uuid) {
+    static const char* k = "0123456789abcdef";
+    std::string        s;
+    s.reserve(uuid.size() * 2);
+    for (auto b : uuid) {
+        s.push_back(k[b >> 4]);
+        s.push_back(k[b & 0xf]);
+    }
+    return s;
+}
+
 template<typename T>
 void AddMsgCmd(looper::Message& msg, T cmd) {
     msg.setInt32("cmd", (int32_t)cmd);
@@ -65,7 +83,13 @@ public:
 
 public:
     MainHandler();
-    virtual ~MainHandler() {};
+    virtual ~MainHandler();
+
+    // Quiesce the render thread: stop the frame timer, stop emitting redraws, and
+    // join both loops so no DRAW runs while the scene/device are torn down. Safe to
+    // call more than once. Called from the texture node teardown because at
+    // plasmashell exit the SceneObject (and thus this handler) is never destroyed.
+    void stopRender();
 
     bool init();
     auto renderHandler() const { return m_render_handler; }
@@ -86,9 +110,11 @@ public:
         }
     }
 
-    void sendCmdLoadScene();
-    void sendFirstFrameOk();
-    bool isGenGraphviz() const { return m_gen_graphviz; }
+    void               sendCmdLoadScene();
+    void               sendFirstFrameOk();
+    bool               isGenGraphviz() const { return m_gen_graphviz; }
+    bool               cachePasses() const { return m_cache_passes; }
+    const std::string& userProps() const { return m_user_props_json; }
 
 private:
     void loadScene();
@@ -105,6 +131,7 @@ private:
     std::string m_source;
     std::string m_cache_path;
     bool        m_gen_graphviz { false };
+    bool        m_cache_passes { true };
 
     WPSceneParser                        m_scene_parser;
     std::unique_ptr<audio::SoundManager> m_sound_manager;
@@ -156,13 +183,62 @@ public:
         }
     }
 
-    ExSwapchain* exSwapchain() const { return m_render->exSwapchain(); }
+    ExSwapchain*                 exSwapchain() const { return m_render->exSwapchain(); }
+    std::shared_ptr<ExSwapchain> currentSwapchain() const { return m_render->currentSwapchain(); }
+
+    void clearRedrawCallback() { m_render->clearRedrawCallback(); }
+
+    void stopRendering() { frame_timer.Stop(); }
+
+    void releaseMirrorGroup() { m_render->releaseMirror(); }
 
     bool renderInited() const { return m_render->inited(); }
 
     void setMousePos(double x, double y) { m_mouse_pos.store(std::array { (float)x, (float)y }); }
 
 private:
+    std::string buildMirrorKey() const {
+        if (! m_scene) return {};
+        std::ostringstream os;
+        os << m_uuid_hex << '|' << m_scene->scene_id << '|' << m_width << 'x' << m_height << '|'
+           << (int)m_fillmode << '|' << m_speed << '|' << main_handler.userProps();
+        return os.str();
+    }
+
+    // After the graph is compiled, decide whether this screen renders or mirrors,
+    // and remember the result for the draw loop.
+    void decideFrameSource() {
+        auto* wpUpdater = static_cast<WPShaderValueUpdater*>(m_scene->shaderValueUpdater.get());
+        bool  mouse_dep = wpUpdater->MouseDependent();
+        std::string key =
+            (MirrorEnabled(m_mirror_setting) && ! mouse_dep) ? buildMirrorKey() : std::string {};
+        m_mirror = ! m_render->beginFrameSource(key);
+        LOG_INFO("scene '%s' mouse_dependent=%d mirror=%d",
+                 m_scene->scene_id.c_str(),
+                 (int)mouse_dep,
+                 (int)m_mirror);
+    }
+
+    void rebuildAndDecide() {
+        if (! m_scene) return;
+        // Release the old passes/render targets/staging refs before allocating the
+        // replacement graph (same as the SET_SCENE path).
+        if (m_rg) m_render->clearLastRenderGraph();
+        m_rg = sceneToRenderGraph(*m_scene);
+        m_render->compileRenderGraph(*m_scene, *m_rg);
+        m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+        decideFrameSource();
+    }
+
+    // A live change to a mirror-key input (fillmode/speed) must re-run the election:
+    // a mirroring secondary now differs from its primary and should render its own,
+    // and a primary's group must re-form under the new key.
+    void onMirrorKeyChanged() {
+        if (! (m_scene && renderInited() && MirrorEnabled(m_mirror_setting))) return;
+        m_render->releaseMirror();
+        rebuildAndDecide();
+    }
+
     MHANDLER_CMD(STOP) {
         bool stop { false };
         if (msg->findBool("value", &stop)) {
@@ -174,6 +250,22 @@ private:
     }
     MHANDLER_CMD(DRAW) {
         frame_timer.FrameBegin();
+        if (m_mirror) {
+            if (m_render->mirrorLost()) {
+                // Primary went away: rebuild our graph and re-run the election;
+                // the first surviving screen for this group becomes the new primary.
+                LOG_INFO("mirror: primary gone, screen re-electing");
+                m_render->releaseMirror();
+                rebuildAndDecide();
+            } else {
+                // Keep this screen's scene clock advancing while mirroring so a
+                // later re-election doesn't restart a time-based wallpaper from ~0.
+                if (m_scene) m_scene->PassFrameTime(frame_timer.IdeaTime() * m_speed);
+                m_render->drawFrame(*m_scene);
+            }
+            frame_timer.FrameEnd();
+            return;
+        }
         if (m_rg) {
             // LOG_INFO("frame info, fps: %.1f, frametime: %.1f", 1.0f, 1000.0f*m_scene->frameTime);
             m_scene->shaderValueUpdater->FrameBegin();
@@ -206,27 +298,44 @@ private:
     }
     MHANDLER_CMD(SET_FILLMODE) {
         int32_t value;
-        if (msg->findInt32("value", &value)) {
+        if (msg->findInt32("value", &value) && (FillMode)value != m_fillmode) {
             m_fillmode = (FillMode)value;
             if (m_scene && renderInited()) {
-                m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+                if (MirrorEnabled(m_mirror_setting))
+                    onMirrorKeyChanged();
+                else
+                    m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
             }
         }
     }
     MHANDLER_CMD(SET_SCENE) {
         if (msg->findObject("scene", &m_scene)) {
+            m_scene->cache_passes = main_handler.cachePasses();
+            m_render->releaseMirror();
             if (m_rg) m_render->clearLastRenderGraph();
             m_rg = sceneToRenderGraph(*m_scene);
 
             if (main_handler.isGenGraphviz()) m_rg->ToGraphviz("graph.dot");
             m_render->compileRenderGraph(*m_scene, *m_rg);
             m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
+
+            decideFrameSource();
         }
     }
-    MHANDLER_CMD(SET_SPEED) { msg->findFloat("value", &m_speed); }
+    MHANDLER_CMD(SET_SPEED) {
+        float v { 1.0f };
+        if (msg->findFloat("value", &v) && v != m_speed) {
+            m_speed = v;
+            onMirrorKeyChanged();
+        }
+    }
     MHANDLER_CMD(INIT_VULKAN) {
         std::shared_ptr<RenderInitInfo> info;
         if (msg->findObject("info", &info)) {
+            m_width          = info->width;
+            m_height         = info->height;
+            m_uuid_hex       = UuidHex(info->uuid);
+            m_mirror_setting = info->mirror_scene;
             m_render->init(*info);
 
             // inited, callback to laod scene
@@ -247,8 +356,28 @@ private:
 
     FillMode m_fillmode { FillMode::ASPECTCROP };
 
+    bool        m_mirror { false };
+    bool        m_mirror_setting { false };
+    std::string m_uuid_hex;
+    uint16_t    m_width { 0 };
+    uint16_t    m_height { 0 };
+
     std::atomic<std::array<float, 2>> m_mouse_pos { std::array { 0.5f, 0.5f } };
 };
+
+void MainHandler::stopRender() {
+    if (m_render_handler) {
+        m_render_handler->stopRendering();
+        m_render_handler->clearRedrawCallback();
+    }
+    if (m_render_loop) m_render_loop->stop();
+    if (m_main_loop) m_main_loop->stop();
+    // After the loops are joined (no render thread left), drop any mirror-group
+    // membership so a primary leaving lets the remaining screens re-elect.
+    if (m_render_handler) m_render_handler->releaseMirrorGroup();
+}
+
+MainHandler::~MainHandler() { stopRender(); }
 } // namespace wallpaper
 
 SceneWallpaper::SceneWallpaper(): m_main_handler(std::make_shared<MainHandler>()) {}
@@ -311,6 +440,16 @@ BASIC_TYPE(Object, std::shared_ptr<void>);
 ExSwapchain* SceneWallpaper::exSwapchain() const {
     return m_main_handler->renderHandler()->exSwapchain();
 }
+
+std::shared_ptr<ExSwapchain> SceneWallpaper::currentSwapchain() const {
+    return m_main_handler->renderHandler()->currentSwapchain();
+}
+
+void SceneWallpaper::clearRedrawCallback() {
+    m_main_handler->renderHandler()->clearRedrawCallback();
+}
+
+void SceneWallpaper::stopRender() { m_main_handler->stopRender(); }
 
 MHANDLER_CMD_IMPL(MainHandler, LOAD_SCENE) {
     if (m_render_handler->renderInited()) {
@@ -378,6 +517,16 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
                 // Skip reload if json is empty - this means wallpaper is changing
                 if (! json.empty() && ! m_source.empty() && ! m_assets.empty()) {
                     LOG_INFO("Reloading scene to apply user properties: %s", json.c_str());
+                    CALL_MHANDLER_CMD(LOAD_SCENE, msg);
+                }
+            }
+        } else if (property == PROPERTY_CACHE_PASSES) {
+            bool value { true };
+            msg->findBool("value", &value);
+            if (m_cache_passes != value) {
+                m_cache_passes = value;
+                // rebuild the render graph so the new setting takes effect live
+                if (! m_source.empty() && ! m_assets.empty()) {
                     CALL_MHANDLER_CMD(LOAD_SCENE, msg);
                 }
             }

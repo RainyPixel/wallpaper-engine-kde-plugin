@@ -5,6 +5,8 @@
 #include "Parameters.hpp"
 #include "TextureCache.hpp"
 
+#include <mutex>
+
 namespace wallpaper
 {
 namespace vulkan
@@ -32,12 +34,14 @@ public:
     const auto& vma_allocator() const { return *m_allocator; }
     const auto& cmd_pool() const { return m_command_pool; }
     const auto& swapchain() const { return m_swapchain; }
-    const auto& out_extent() const { return m_extent; }
-    void        set_out_extent(VkExtent2D v) { m_extent = v; }
 
     bool supportExt(std::string_view) const;
 
-    TextureCache& tex_cache() const { return *m_tex_cache; }
+    AssetCache& asset_cache() const { return *m_asset_cache; }
+
+    // Serializes vkQueueSubmit/Present across the render threads that share this
+    // device. Uncontended when the device is not shared.
+    std::mutex& queue_mutex() const { return m_queue_mutex; }
 
     VkDeviceSize GetUsage() const;
 
@@ -59,10 +63,9 @@ private:
     QueueParameters m_graphics_queue;
     QueueParameters m_present_queue;
 
-    // output extent
-    VkExtent2D m_extent { 1, 1 };
+    std::unique_ptr<AssetCache> m_asset_cache;
 
-    std::unique_ptr<TextureCache> m_tex_cache;
+    mutable std::mutex m_queue_mutex;
 };
 
 } // namespace vulkan

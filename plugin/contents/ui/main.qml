@@ -11,16 +11,28 @@ Rectangle {
     color: wallpaper.configuration.BackgroundColor
     
     property string steamlibrary: Qt.resolvedUrl(wallpaper.configuration.SteamLibraryPath).toString()
-    property string source: Qt.resolvedUrl(wallpaper.configuration.WallpaperSource).toString()
+    // Global Mode: shared config (wallpaper choice + randomization) lives in
+    // ~/.config/wekde/global.json instead of per-screen KConfig. globalRev is
+    // bumped on every global change to re-evaluate the resolver bindings below.
+    property int    globalRev: 0
+    function effCfg(key, fallback) {
+        background.globalRev;
+        return globalCfg.enabled ? globalCfg.get(key, fallback) : fallback;
+    }
 
-    property string filterStr: wallpaper.configuration.FilterStr
+    property string source: Qt.resolvedUrl(effCfg("WallpaperSource", wallpaper.configuration.WallpaperSource)).toString()
+
+    property string filterStr: effCfg("FilterStr", wallpaper.configuration.FilterStr)
 
     property int    videoBackend: wallpaper.configuration.VideoBackend
-    property int    switchTimer: wallpaper.configuration.SwitchTimer
+    property int    switchTimer: effCfg("SwitchTimer", wallpaper.configuration.SwitchTimer)
     property int    fps: wallpaper.configuration.Fps
+    property bool   cacheScenePasses: wallpaper.configuration.SceneCachePasses
+    property bool   shareGpuContext: wallpaper.configuration.ShareGpuContext
+    property bool   mirrorScene: wallpaper.configuration.MirrorScene
 
-    property bool   randomizeWallpaper: wallpaper.configuration.RandomizeWallpaper
-    property bool   noRandomWhilePaused: wallpaper.configuration.NoRandomWhilePaused
+    property bool   randomizeWallpaper: effCfg("RandomizeWallpaper", wallpaper.configuration.RandomizeWallpaper)
+    property bool   noRandomWhilePaused: effCfg("NoRandomWhilePaused", wallpaper.configuration.NoRandomWhilePaused)
     property bool   mouseInput: wallpaper.configuration.MouseInput
     property bool   mpvStats: wallpaper.configuration.MpvStats
     property string mpvHwdec: wallpaper.configuration.MpvHwdec
@@ -31,7 +43,7 @@ Rectangle {
     
     property var curOpt: ({})
     property string workshopid: {
-        const wid = wallpaper.configuration.WallpaperWorkShopId;
+        const wid = effCfg("WallpaperWorkShopId", wallpaper.configuration.WallpaperWorkShopId);
         pyext.read_wallpaper_config(wid).then((res) => this.curOpt = res);
         return wid;
     }
@@ -247,12 +259,30 @@ Rectangle {
         }
         readfile: pyext.readfile
 
+        function applyWallpaperBySource(source, workshopid) {
+            wallpaper.configuration.WallpaperWorkShopId = workshopid;
+            wallpaper.configuration.WallpaperSource = source;
+        }
         function changeWallpaper(index) {
             if(this.model.count === 0) return;
             const model = this.model.get(index);
-            wallpaper.configuration.WallpaperWorkShopId = model.workshopid;
-            wallpaper.configuration.WallpaperSource = Common.packWallpaperSource(model);
+            this.applyWallpaperBySource(Common.packWallpaperSource(model), model.workshopid);
         }
+    }
+
+    GlobalConfig {
+        id: globalCfg
+    }
+    Connections {
+        target: globalCfg
+        function onChanged(key, value) { background.globalRev++; }
+        function onEnabledChanged()    { background.globalRev++; }
+    }
+    // wakes this renderer when the config dialog (possibly another process)
+    // writes the global config
+    WallpaperSyncBus {
+        id: syncBus
+        onGlobalConfigChanged: globalCfg.reload()
     }
     Timer {
         id: randomizeTimer
@@ -260,10 +290,19 @@ Rectangle {
         interval: background.switchTimer * 1000 * 60
         repeat: true
         onTriggered: {
-            if(!(background.noRandomWhilePaused && !background.ok)) {
-                const i = Math.round(Math.random() * wpListModel.model.count);
-                wpListModel.changeWallpaper(i);
-            }
+            if(background.noRandomWhilePaused && !background.ok) return;
+            // in Global Mode only the primary screen picks; the choice is
+            // shared via the global config so all screens apply the same one
+            if(globalCfg.enabled && !syncBus.isPrimary) return;
+            if(wpListModel.model.count === 0) return;
+
+            const i = Math.floor(Math.random() * wpListModel.model.count);
+            const model = wpListModel.model.get(i);
+            const source = Common.packWallpaperSource(model);
+            if(globalCfg.enabled)
+                globalCfg.setBatch({ "WallpaperSource": source, "WallpaperWorkShopId": model.workshopid });
+            else
+                wpListModel.applyWallpaperBySource(source, model.workshopid);
         }
     }
 

@@ -70,6 +70,22 @@
       <label>Prevent randomization while wallpapers are paused</label>
       <default>false</default>
     </entry>
+    <entry name="GlobalMode" type="Bool">
+      <label>Share one configuration across all screens</label>
+      <default>false</default>
+    </entry>
+    <entry name="SceneCachePasses" type="Bool">
+      <label>Cache static layers of scene wallpapers</label>
+      <default>true</default>
+    </entry>
+    <entry name="ShareGpuContext" type="Bool">
+      <label>Share one GPU device across screens on the same GPU</label>
+      <default>true</default>
+    </entry>
+    <entry name="MirrorScene" type="Bool">
+      <label>Render an identical scene wallpaper once and mirror it to other screens</label>
+      <default>false</default>
+    </entry>
     <entry name="MpvStats" type="Bool">
       <label>Mpv Stats</label>
       <default>false</default>

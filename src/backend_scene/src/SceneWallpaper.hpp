@@ -21,6 +21,7 @@ constexpr std::string_view PROPERTY_MUTED                = "muted";
 constexpr std::string_view PROPERTY_CACHE_PATH           = "cache_path";
 constexpr std::string_view PROPERTY_FIRST_FRAME_CALLBACK = "first_frame_callback";
 constexpr std::string_view PROPERTY_USER_PROPS           = "user_props";
+constexpr std::string_view PROPERTY_CACHE_PASSES         = "cache_passes";
 
 #include "Core/NoCopyMove.hpp"
 class MainHandler;
@@ -46,6 +47,16 @@ public:
     void setPropertyObject(std::string_view, std::shared_ptr<void>);
 
     ExSwapchain* exSwapchain() const;
+    // Thread-safe snapshot of the current frame source; hold it across eatFrame().
+    std::shared_ptr<ExSwapchain> currentSwapchain() const;
+
+    // Stops the render loop from invoking its redraw callback; call before the
+    // owning texture node is destroyed (teardown ordering).
+    void clearRedrawCallback();
+
+    // Stops the frame timer and joins the render/main loops so no render-thread
+    // work runs during teardown. Called from texture-node destruction.
+    void stopRender();
 
 private:
     bool m_inited { false };

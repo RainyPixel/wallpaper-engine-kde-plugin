@@ -75,6 +75,9 @@ private:
     Desc m_desc;
     bool m_cached { false };
     bool m_uses_time_uniforms { false };
+    // decided in prepare(): output never changes after the first frame, so
+    // execute() may be skipped on subsequent frames (graph-aware, see prepare)
+    bool m_frame_static { false };
 };
 
 } // namespace vulkan

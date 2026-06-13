@@ -43,6 +43,9 @@ Item{
         anchors.fill: parent
         fps: background.fps
         muted: background.mute
+        cachePasses: background.cacheScenePasses
+        shareGpu: background.shareGpuContext
+        mirrorScene: background.mirrorScene
         speed: background.speed
         assets: sceneItem.assets
         userProperties: sceneItem.userPropsJson

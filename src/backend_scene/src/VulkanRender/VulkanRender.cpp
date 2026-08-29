@@ -646,6 +646,13 @@ void VulkanRender::Impl::releaseMirror() {
 }
 
 void VulkanRender::Impl::clearLastRenderGraph() {
+    // Wait for queued work before destroying resources owned by the old graph.
+    // vkDeviceWaitIdle requires external synchronization with queue submissions.
+    if (m_gpu && device().handle()) {
+        std::lock_guard<std::mutex> lk(device().queue_mutex());
+        VVK_CHECK(device().handle().WaitIdle());
+    }
+
     for (auto& p : m_passes) {
         p->destory(device(), m_rendering_resources);
     }

@@ -154,6 +154,13 @@ GraphicsPipeline& GraphicsPipeline::setTopology(VkPrimitiveTopology topology) {
 
 bool GraphicsPipeline::create(const Device& device, vvk::RenderPass& pass,
                               PipelineParameters& pipeline) {
+    // PipelineParameters is reused across scene changes; release its previous
+    // Vulkan objects and descriptor layouts before rebuilding it.
+    pipeline.handle.reset();
+    pipeline.layout.reset();
+    pipeline.pass.reset();
+    pipeline.descriptor_layouts.clear();
+
     VkPipelineDynamicStateCreateInfo dynamic_info {
         .sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .pNext             = nullptr,

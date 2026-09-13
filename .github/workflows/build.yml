@@ -102,3 +102,43 @@ jobs:
 
       - name: Build
         run: cmake --build build -j$(nproc)
+
+  # ── Hyprland host (separate CMake project, no KDE dependencies) ───────────
+  build-hyprland:
+    name: Hyprland host build and unit tests
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install git (needed for checkout action inside container)
+        run: pacman -Sy --noconfirm git
+
+      - uses: actions/checkout@v4
+        # No submodules needed — the host does not build the scene renderer
+
+      - name: Install build dependencies
+        run: |
+          pacman -Su --noconfirm
+          pacman -S --noconfirm \
+            base-devel \
+            cmake \
+            ninja \
+            qt6-base \
+            qt6-declarative \
+            qt6-webengine \
+            qt6-wayland \
+            layer-shell-qt
+
+      - name: Configure
+        run: |
+          cmake -B build/hyprland -S hyprland \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build/hyprland -j$(nproc)
+
+      - name: Run unit tests
+        # The Wayland smoke test needs a real session and stays opt-in.
+        run: ctest --test-dir build/hyprland -L unit --output-on-failure

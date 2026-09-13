@@ -20,6 +20,6 @@ jobs:
         # --dry-run prints differences; --Werror turns any difference into a
         # non-zero exit code so the job fails on style violations.
         run: |
-          find src \( -path "*/third_party/*" -prune \) -o \
+          find src hyprland tests \( -path "*/third_party/*" -prune \) -o \
             \( -name "*.cpp" -o -name "*.hpp" -o -name "*.h" \) -print | \
             xargs clang-format --dry-run --Werror

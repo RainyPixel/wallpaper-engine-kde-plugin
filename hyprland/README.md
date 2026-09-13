@@ -22,7 +22,9 @@ which has not been done yet.
 | Web wallpapers | yes | yes |
 | Video wallpapers | no | yes |
 | Scene wallpapers | no | yes |
-| Wallpaper browser and settings UI | no, command line only | yes |
+| Wallpaper browser | yes, `browse` | yes |
+| Settings UI | no, command line only | yes |
+| Finds the Steam library itself | yes | yes |
 | User properties | via command line, validated, not saved | yes, saved |
 | Pause and resume | manual, the page is frozen | automatic rules |
 | Pause on fullscreen, battery or lock | no | yes |
@@ -30,8 +32,9 @@ which has not been done yet.
 | Audio | muted unless `--audio` | yes |
 | Several monitors | one surface per selected output, reconnects | per screen |
 
-The host was developed for Hyprland on Omarchy 4 with Qt 6.11 and layer-shell-qt 6.7. It uses
-only the `wlr-layer-shell` protocol, but other compositors have not been tried. Debian and
+The host was developed for Hyprland on Omarchy 4 with Qt 6.11 and layer-shell-qt 6.7, and is
+also built and tested against Qt 6.8 and layer-shell-qt 6.3. It uses only the `wlr-layer-shell`
+protocol, but other compositors have not been tried. Debian and
 Fedora package names below are provided for convenience and are untested.
 
 ## Build
@@ -57,7 +60,8 @@ Debian and Ubuntu (a release with Qt 6.7 or newer):
 
 ```sh
 sudo apt install cmake ninja-build g++ qt6-base-dev qt6-declarative-dev qt6-webengine-dev \
-    qt6-wayland qml6-module-qtquick qml6-module-qtwebengine liblayershellqtinterface-dev python3
+    qt6-wayland qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+    qml6-module-qtwebengine liblayershellqtinterface-dev python3
 ```
 
 From the repository root:
@@ -76,13 +80,34 @@ Without Ninja, drop `-G Ninja`. Pass `-DWEHYPR_BUILD_TESTS=OFF` to skip the test
 ## Usage
 
 A project is a Wallpaper Engine project directory (or its `project.json`) with `"type": "web"`.
-Workshop items are usually in `~/.local/share/Steam/steamapps/workshop/content/431960/<id>`.
+
+The Steam installation is found automatically: native, Flatpak and Snap layouts, every library
+listed in `libraryfolders.vdf`, and libraries shared with a Windows install whose directories are
+spelled `SteamApps/Workshop/Content`. So a project can also be given as a bare workshop id, and
+`browse` and `list` need no paths at all.
 
 ```sh
+wallpaper-engine-hyprland browse                 # pick a wallpaper in a window
+wallpaper-engine-hyprland list                   # the same wallpapers as JSON
+wallpaper-engine-hyprland run 1234567890         # a workshop id
 wallpaper-engine-hyprland check ~/wallpapers/my-web-wallpaper
 wallpaper-engine-hyprland outputs
 wallpaper-engine-hyprland run ~/wallpapers/my-web-wallpaper --output eDP-1
 ```
+
+`browse` opens a grid of every installed wallpaper with its preview, a search field and a type
+filter. Scene and video wallpapers are listed greyed out, because the host cannot play them yet;
+the filter opens on `web` so the playable ones are what you see first. Applying one remembers it
+in `~/.config/wallpaper-engine-hyprland/<instance>.json`, stops a running host and starts a new
+one, so `run` without a project argument shows whatever was picked last:
+
+```
+exec-once = uwsm app -- wallpaper-engine-hyprland run
+```
+
+`browse` passes its own `--output`, `--fps`, `--audio`, `--allow-remote`, `--diagnostics`,
+`--gpu-rasterization` and `--instance` on to the wallpaper it starts. Without an output selection
+it covers every output.
 
 `run` stays in the foreground until it gets `quit`, Ctrl+C or SIGTERM. When only one output is
 connected it is used automatically. With several outputs, pass `--output NAME` (repeatable) or
@@ -139,6 +164,12 @@ session, add a line like this to `~/.config/hypr/autostart.conf` on Omarchy, or 
 exec-once = uwsm app -- wallpaper-engine-hyprland run /path/to/project --output eDP-1
 ```
 
+With `browse` the project can be left out, and the line never has to be edited again:
+
+```
+exec-once = uwsm app -- wallpaper-engine-hyprland run
+```
+
 Without uwsm, use `exec-once = wallpaper-engine-hyprland run ...`.
 
 ## Behaviour on Hyprland and Omarchy
@@ -191,8 +222,10 @@ per client.
 ## Tests
 
 Unit tests (`ctest -L unit`) cover project validation, property checks, command line parsing,
-output selection, the lock and the control socket, and run the binary for commands that do not
-open windows. They need no display.
+output selection, the lock and the control socket, Steam library detection and the wallpaper
+scan, the saved-choice state file, and run the binary for commands that do not open windows.
+They need no display or Steam installation: the detection tests build a fake Steam tree in a
+temporary directory. CI runs them on every push.
 
 The smoke test opens a real background surface for about a minute on the running session. It
 uses the fixture in `tests/fixtures/web-basic`, picks the focused Hyprland monitor or the first
@@ -214,6 +247,9 @@ outside a Wayland session.
 
 ## Known limitations
 
+- Applying a wallpaper in `browse` restarts the host, so the background flashes through for a
+  moment. A `load` control command would avoid that; the restart path is needed for a cold start
+  either way.
 - Every output runs its own web page, so CPU and GPU use grow with the number of outputs.
 - Session lock, idle, fullscreen windows and battery state are not detected.
 - `file`, `directory` and `text` properties cannot be changed at runtime.

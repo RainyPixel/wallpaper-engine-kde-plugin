@@ -38,6 +38,12 @@ They do not at this stage.
   scene graph as well.
 - Project validation, command line parsing, output selection and the local IPC protocol are in
   a small Qt Core/Network library (`wehypr-core`) that has unit tests without a display.
+- Steam library detection is shared with the KDE plugin as a source file, not a library:
+  `wehypr-core` compiles `../src/SteamPaths.cpp` directly. The plugin cannot be linked against
+  (`src/CMakeLists.txt` hides every symbol and passes `-Wl,--exclude-libs,ALL`), and `tests/`
+  already pulls `src/FileHelper.cpp` across project boundaries the same way. Keeping the file
+  under `src/` also puts it inside the existing clang-format and unit-test CI jobs, which need
+  only Qt Core.
 - Control uses a per-user, per-instance Unix socket in `$XDG_RUNTIME_DIR` guarded by a lock
   file. Requests are single JSON lines with size, client count and idle time limits.
 
@@ -47,8 +53,9 @@ They do not at this stage.
   component selected by `project.json` type. Needs libmpv and `LC_NUMERIC=C` after the
   `QGuiApplication` is created.
 - Scene: build `src/backend_scene` with `BUILD_QML=ON` (requires the git submodules, Vulkan
-  and lz4), register `scenebackend::SceneObject`, and pass the Wallpaper Engine `assets`
-  directory from the Steam installation.
+  and lz4) and register `scenebackend::SceneObject`. The Wallpaper Engine `assets` directory is
+  already available: `steam::assetsDir()` of the library `steam::detectLibraries()` reports an
+  install for.
 - Automatic pause (fullscreen windows, battery, session lock) would use Hyprland IPC, UPower
   and logind instead of the Plasma models.
 

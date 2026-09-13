@@ -40,6 +40,17 @@ if(NOT TARGET LayerShellQt::Interface)
     "  Debian/Ubuntu: apt install liblayershellqtinterface-dev")
 endif()
 
+# setActivateOnShow() is missing in older LayerShellQt (Debian trixie ships 6.3.4).
+include(CMakePushCheckState)
+include(CheckCXXSourceCompiles)
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_LIBRARIES LayerShellQt::Interface Qt6::Gui)
+check_cxx_source_compiles(
+  "#include <LayerShellQt/Window>
+   int main() { LayerShellQt::Window* w = nullptr; w->setActivateOnShow(false); return 0; }"
+  WEHYPR_HAVE_ACTIVATE_ON_SHOW)
+cmake_pop_check_state()
+
 qt_standard_project_setup(REQUIRES 6.7)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -72,6 +83,9 @@ qt_add_qml_module(wallpaper-engine-hyprland
 )
 target_compile_definitions(wallpaper-engine-hyprland
   PRIVATE WEHYPR_VERSION="${PROJECT_VERSION}")
+if(WEHYPR_HAVE_ACTIVATE_ON_SHOW)
+  target_compile_definitions(wallpaper-engine-hyprland PRIVATE WEHYPR_HAVE_ACTIVATE_ON_SHOW)
+endif()
 target_compile_options(wallpaper-engine-hyprland PRIVATE ${WEHYPR_WARNINGS})
 target_link_libraries(wallpaper-engine-hyprland
   PRIVATE

@@ -63,7 +63,9 @@ bool OutputSurface::create(QString* error) {
                           LayerShellQt::Window::AnchorRight);
         layer->setExclusiveZone(-1);
         layer->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
+#ifdef WEHYPR_HAVE_ACTIVATE_ON_SHOW
         layer->setActivateOnShow(false);
+#endif
         m_view->resize(m_screen->size());
         connect(m_screen.data(), &QScreen::geometryChanged, this, [this] {
             if (m_view && m_screen) m_view->resize(m_screen->size());

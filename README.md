@@ -10,6 +10,13 @@ A wallpaper plugin integrating [Wallpaper Engine](https://store.steampowered.com
 - **Fixed KDE 6.5+ theme reactivity** — UI elements no longer become invisible when switching between light/dark themes
 - **Plasma 6 / Qt6 support**
 
+## Hyprland and Omarchy
+
+The [`hyprland/`](hyprland/README.md) directory contains a separate host that shows web wallpapers
+as a Wayland background on Hyprland without Plasma. It has its own build
+(`cmake -B build/hyprland -S hyprland`) and currently supports web wallpapers only; scene and
+video wallpapers remain KDE-only for now. The KDE plugin build below is unaffected.
+
 ## Install
 
 ### Arch Linux (AUR)

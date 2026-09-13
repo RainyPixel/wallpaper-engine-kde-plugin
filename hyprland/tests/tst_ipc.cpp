@@ -99,7 +99,8 @@ private slots:
         bool                       connected = false;
         QString                    clientError;
         std::unique_ptr<QThread>   client(QThread::create([&] {
-            response = sendRequest(path, { { "command", "status" } }, 5000, &clientError, &connected);
+            response =
+                sendRequest(path, { { "command", "status" } }, 5000, &clientError, &connected);
         }));
         client->start();
         QTRY_VERIFY_WITH_TIMEOUT(client->isFinished(), 10000);
@@ -117,8 +118,8 @@ private slots:
         QTest::newRow("broken json") << QByteArray("{broken\n") << QStringLiteral("JSON object");
         QTest::newRow("array") << QByteArray("[1]\n") << QStringLiteral("JSON object");
         QTest::newRow("no command") << QByteArray("{\"x\":1}\n") << QStringLiteral("no command");
-        QTest::newRow("too large") << QByteArray(IpcServer::k_maxRequestBytes + 10, 'a')
-                                   << QStringLiteral("too large");
+        QTest::newRow("too large")
+            << QByteArray(IpcServer::k_maxRequestBytes + 10, 'a') << QStringLiteral("too large");
     }
 
     void invalidRequests() {
@@ -142,8 +143,7 @@ private slots:
         QString       error;
         QVERIFY2(server.listen(path, &error), qPrintable(error));
 
-        const QByteArray data =
-            rawExchange(path, "{\"command\":\"a\"}\n{\"command\":\"b\"}\n");
+        const QByteArray data = rawExchange(path, "{\"command\":\"a\"}\n{\"command\":\"b\"}\n");
         QCOMPARE(parseLine(data).value("echo").toString(), QStringLiteral("a"));
         QCOMPARE(data.count('\n'), qsizetype(1));
         QCOMPARE(m_handled, 1);
@@ -215,11 +215,8 @@ private slots:
     void sendRequest_withoutServer() {
         bool       connected = true;
         QString    error;
-        const auto response = sendRequest(socketPath(m_dir, "nobody"),
-                                          { { "command", "status" } },
-                                          1000,
-                                          &error,
-                                          &connected);
+        const auto response = sendRequest(
+            socketPath(m_dir, "nobody"), { { "command", "status" } }, 1000, &error, &connected);
         QVERIFY(! response);
         QVERIFY(! connected);
     }

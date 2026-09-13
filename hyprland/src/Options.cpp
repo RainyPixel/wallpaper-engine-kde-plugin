@@ -16,18 +16,12 @@ struct CommandName {
 };
 
 constexpr CommandName k_commands[] = {
-    { "run", Command::Run },
-    { "check", Command::Check },
-    { "outputs", Command::Outputs },
-    { "status", Command::Status },
-    { "pause", Command::Pause },
-    { "resume", Command::Resume },
-    { "quit", Command::Quit },
-    { "set-properties", Command::SetProperties },
-    { "help", Command::Help },
-    { "--help", Command::Help },
-    { "-h", Command::Help },
-    { "version", Command::Version },
+    { "run", Command::Run },           { "check", Command::Check },
+    { "outputs", Command::Outputs },   { "status", Command::Status },
+    { "pause", Command::Pause },       { "resume", Command::Resume },
+    { "quit", Command::Quit },         { "set-properties", Command::SetProperties },
+    { "help", Command::Help },         { "--help", Command::Help },
+    { "-h", Command::Help },           { "version", Command::Version },
     { "--version", Command::Version },
 };
 
@@ -99,14 +93,14 @@ ParseResult parseCommandLine(const QStringList& arguments) {
     const QCommandLineOption outputOpt(QStringLiteral("output"), {}, QStringLiteral("name"));
     const QCommandLineOption allOutputsOpt(QStringLiteral("all-outputs"));
     const QCommandLineOption fpsOpt(QStringLiteral("fps"), {}, QStringLiteral("fps"));
-    const QCommandLineOption propertiesOpt(QStringLiteral("properties"), {}, QStringLiteral("json"));
+    const QCommandLineOption propertiesOpt(
+        QStringLiteral("properties"), {}, QStringLiteral("json"));
     const QCommandLineOption allowRemoteOpt(QStringLiteral("allow-remote"));
     const QCommandLineOption audioOpt(QStringLiteral("audio"));
     const QCommandLineOption windowOpt(QStringLiteral("window"));
     const QCommandLineOption diagnosticsOpt(QStringLiteral("diagnostics"));
-    const QCommandLineOption gpuRasterOpt(QStringLiteral("gpu-rasterization"),
-                                          {},
-                                          QStringLiteral("mode"));
+    const QCommandLineOption gpuRasterOpt(
+        QStringLiteral("gpu-rasterization"), {}, QStringLiteral("mode"));
     const QCommandLineOption durationOpt(QStringLiteral("duration"), {}, QStringLiteral("seconds"));
 
     switch (command) {

@@ -20,7 +20,7 @@ namespace
 {
 constexpr qsizetype k_maxResponseBytes = 4 * 1024 * 1024;
 // sockaddr_un::sun_path including the terminating zero
-constexpr qsizetype k_maxSocketPath = 108;
+constexpr qsizetype k_maxSocketPath   = 108;
 const char*         k_repliedProperty = "wehyprReplied";
 } // namespace
 
@@ -37,9 +37,8 @@ QString runtimeDirectory(QString* error) {
     }
     const QFileInfo info(dir);
     if (! info.isDir() || info.ownerId() != ::getuid() ||
-        ! QFile::setPermissions(dir,
-                                QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                    QFileDevice::ExeOwner)) {
+        ! QFile::setPermissions(
+            dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner)) {
         *error = QStringLiteral("%1 must be a directory owned by the current user").arg(dir);
         return {};
     }
@@ -80,7 +79,9 @@ bool InstanceLock::tryLock(QString* error) {
     return false;
 }
 
-bool InstanceLock::heldByOtherProcess() const { return m_lock.error() == QLockFile::LockFailedError; }
+bool InstanceLock::heldByOtherProcess() const {
+    return m_lock.error() == QLockFile::LockFailedError;
+}
 
 IpcServer::IpcServer(Handler handler, QObject* parent)
     : QObject(parent), m_handler(std::move(handler)) {}
@@ -161,7 +162,8 @@ void IpcServer::handleClient(QLocalSocket* client) {
         QJsonParseError parseError;
         const auto      doc = QJsonDocument::fromJson(buffer->left(newline), &parseError);
         if (parseError.error != QJsonParseError::NoError || ! doc.isObject()) {
-            reply(client, errorResponse(QStringLiteral("request must be one JSON object per line")));
+            reply(client,
+                  errorResponse(QStringLiteral("request must be one JSON object per line")));
             return;
         }
         const QJsonObject request = doc.object();

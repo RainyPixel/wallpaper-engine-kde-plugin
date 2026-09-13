@@ -72,9 +72,9 @@ bool OutputSurface::create(QString* error) {
         });
     }
 
-    m_view->setInitialProperties({ { QStringLiteral("host"), QVariant::fromValue<QObject*>(m_host) },
-                                   { QStringLiteral("surface"),
-                                     QVariant::fromValue<QObject*>(this) } });
+    m_view->setInitialProperties(
+        { { QStringLiteral("host"), QVariant::fromValue<QObject*>(m_host) },
+          { QStringLiteral("surface"), QVariant::fromValue<QObject*>(this) } });
     m_view->loadFromModule("WallpaperEngineHyprland", "WallpaperSurface");
     if (m_view->status() != QQuickView::Ready) {
         QStringList messages;
@@ -211,8 +211,9 @@ int WallpaperHost::start(const QString& socketPath, QString* error) {
     for (const QString& name : selection.missing)
         qWarning().noquote() << "output" << name << "is not connected, waiting for it";
 
-    m_server = std::make_unique<IpcServer>(
-        [this](const QJsonObject& request) { return handleRequest(request); });
+    m_server = std::make_unique<IpcServer>([this](const QJsonObject& request) {
+        return handleRequest(request);
+    });
     if (! m_server->listen(socketPath, error)) return ExitRuntimeFailure;
 
     connect(qApp, &QGuiApplication::screenAdded, this, &WallpaperHost::addScreen);
@@ -288,11 +289,14 @@ QJsonObject WallpaperHost::handleRequest(const QJsonObject& request) {
         const QJsonObject changed = applyPropertyValues(&m_project.properties, *values);
         if (! changed.isEmpty()) emit propertyValuesChanged(changed.toVariantMap());
         return QJsonObject { { QStringLiteral("ok"), true },
-                             { QStringLiteral("changed"), QJsonArray::fromStringList(changed.keys()) } };
+                             { QStringLiteral("changed"),
+                               QJsonArray::fromStringList(changed.keys()) } };
     }
     if (command == QLatin1String("quit")) {
         qInfo("quit requested");
-        QTimer::singleShot(0, qApp, [] { QCoreApplication::quit(); });
+        QTimer::singleShot(0, qApp, [] {
+            QCoreApplication::quit();
+        });
         return QJsonObject { { QStringLiteral("ok"), true } };
     }
     return errorResponse(QStringLiteral("unknown command '%1'").arg(command));
@@ -323,7 +327,8 @@ QJsonObject WallpaperHost::status() const {
         { QStringLiteral("title"), m_project.title },
         { QStringLiteral("type"), m_project.type },
         { QStringLiteral("url"), m_project.entryUrl.toString() },
-        { QStringLiteral("mode"), m_options.window ? QStringLiteral("window") : QStringLiteral("layer") },
+        { QStringLiteral("mode"),
+          m_options.window ? QStringLiteral("window") : QStringLiteral("layer") },
         { QStringLiteral("fps"), m_options.fps },
         { QStringLiteral("audio"), m_options.audio },
         { QStringLiteral("allowRemote"), m_options.allowRemote },

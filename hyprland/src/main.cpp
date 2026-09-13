@@ -21,16 +21,14 @@ using namespace wehypr;
 
 namespace
 {
-constexpr auto k_appName = "wallpaper-engine-hyprland";
+constexpr auto k_appName          = "wallpaper-engine-hyprland";
 constexpr int  k_requestTimeoutMs = 5000;
 
 int g_signalFds[2] = { -1, -1 };
 
 void printOut(const QString& text) { QTextStream(stdout) << text; }
 
-void printError(const QString& text) {
-    QTextStream(stderr) << k_appName << ": " << text << '\n';
-}
+void printError(const QString& text) { QTextStream(stderr) << k_appName << ": " << text << '\n'; }
 
 QString indented(const QJsonObject& object) {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Indented));
@@ -110,7 +108,7 @@ int runControl(const Options& options) {
 
     const QString path      = socketPath(dir, options.instance);
     bool          connected = false;
-    const auto response = sendRequest(path, request, k_requestTimeoutMs, &error, &connected);
+    const auto    response  = sendRequest(path, request, k_requestTimeoutMs, &error, &connected);
     if (! response) {
         if (! connected) {
             printError(QStringLiteral("no running host for instance '%1' (%2)")
@@ -163,7 +161,8 @@ int runHost(const Options& options, int& argc, char** argv) {
         return ExitInvalidProject;
     }
     if (! options.window && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
-        printError(QStringLiteral("layer surfaces need a Wayland session, WAYLAND_DISPLAY is not set"));
+        printError(
+            QStringLiteral("layer surfaces need a Wayland session, WAYLAND_DISPLAY is not set"));
         return ExitEnvironment;
     }
 
@@ -191,7 +190,8 @@ int runHost(const Options& options, int& argc, char** argv) {
     QGuiApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
 
-    if (! options.window && ! QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
+    if (! options.window &&
+        ! QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
         printError(QStringLiteral("layer surfaces need the Qt Wayland platform, got '%1'")
                        .arg(QGuiApplication::platformName()));
         return ExitEnvironment;
@@ -226,8 +226,8 @@ int main(int argc, char** argv) {
     switch (options.command) {
     case Command::Help: printOut(usage()); return ExitOk;
     case Command::Version:
-        printOut(QStringLiteral("%1 %2\n")
-                     .arg(QString::fromLatin1(k_appName), QLatin1String(WEHYPR_VERSION)));
+        printOut(QStringLiteral("%1 %2\n").arg(QString::fromLatin1(k_appName),
+                                               QLatin1String(WEHYPR_VERSION)));
         return ExitOk;
     case Command::Check: return runCheck(options);
     case Command::Outputs: return runOutputs(argc, argv);

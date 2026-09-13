@@ -67,7 +67,6 @@ struct OutputSelection {
 };
 
 // available must not contain empty names (placeholder screens).
-OutputSelection selectOutputs(const QStringList& available, const QStringList& requested,
-                              bool all);
+OutputSelection selectOutputs(const QStringList& available, const QStringList& requested, bool all);
 
 } // namespace wehypr

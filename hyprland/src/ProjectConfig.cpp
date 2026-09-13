@@ -21,7 +21,8 @@ constexpr int    k_maxTextLength      = 4096;
 
 bool isInside(const QString& rootDir, const QString& path) {
     if (rootDir.isEmpty() || path.isEmpty()) return false;
-    const QString prefix = rootDir.endsWith(QLatin1Char('/')) ? rootDir : rootDir + QLatin1Char('/');
+    const QString prefix =
+        rootDir.endsWith(QLatin1Char('/')) ? rootDir : rootDir + QLatin1Char('/');
     return path.startsWith(prefix);
 }
 
@@ -38,7 +39,7 @@ bool valueMatches(const QJsonObject& definition, const QJsonValue& value, QStrin
             *reason = QStringLiteral("expected a number");
             return false;
         }
-        const double    number = value.toDouble();
+        const double     number = value.toDouble();
         const QJsonValue min    = definition.value(QLatin1String("min"));
         const QJsonValue max    = definition.value(QLatin1String("max"));
         if (min.isDouble() && number < min.toDouble()) {
@@ -57,9 +58,8 @@ bool valueMatches(const QJsonObject& definition, const QJsonValue& value, QStrin
         return false;
     }
     if (type == QLatin1String("color")) {
-        const QStringList parts =
-            value.toString().split(QLatin1Char(' '), Qt::SkipEmptyParts);
-        bool valid = value.isString() && (parts.size() == 3 || parts.size() == 4);
+        const QStringList parts = value.toString().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        bool              valid = value.isString() && (parts.size() == 3 || parts.size() == 4);
         for (const QString& part : parts) {
             bool         ok        = false;
             const double component = part.toDouble(&ok);
@@ -113,12 +113,17 @@ bool valueMatches(const QJsonObject& definition, const QJsonValue& value, QStrin
 
 std::optional<Project> loadProject(const QString& path, QString* error) {
     QFileInfo info(path);
-    if (! info.exists()) return fail(error, QStringLiteral("project path does not exist: %1").arg(path));
-    if (info.isDir()) info = QFileInfo(QDir(info.absoluteFilePath()).filePath(QStringLiteral("project.json")));
+    if (! info.exists())
+        return fail(error, QStringLiteral("project path does not exist: %1").arg(path));
+    if (info.isDir())
+        info = QFileInfo(QDir(info.absoluteFilePath()).filePath(QStringLiteral("project.json")));
     if (! info.isFile())
-        return fail(error, QStringLiteral("project.json not found: %1").arg(info.absoluteFilePath()));
+        return fail(error,
+                    QStringLiteral("project.json not found: %1").arg(info.absoluteFilePath()));
     if (info.size() > k_maxProjectFileSize)
-        return fail(error, QStringLiteral("project file is larger than 4 MiB: %1").arg(info.absoluteFilePath()));
+        return fail(
+            error,
+            QStringLiteral("project file is larger than 4 MiB: %1").arg(info.absoluteFilePath()));
 
     QFile file(info.absoluteFilePath());
     if (! file.open(QIODevice::ReadOnly))
@@ -162,14 +167,17 @@ std::optional<Project> loadProject(const QString& path, QString* error) {
     if (canonical.isEmpty())
         return fail(error, QStringLiteral("entry file does not exist: %1").arg(entry));
     if (! isInside(project.rootDir, canonical))
-        return fail(error, QStringLiteral("entry file resolves outside the project directory: %1").arg(entry));
+        return fail(
+            error,
+            QStringLiteral("entry file resolves outside the project directory: %1").arg(entry));
     const QFileInfo entryInfo(canonical);
     if (! entryInfo.isFile() || ! entryInfo.isReadable())
         return fail(error, QStringLiteral("entry is not a readable file: %1").arg(entry));
     const QString suffix = entryInfo.suffix().toLower();
     if (suffix != QLatin1String("html") && suffix != QLatin1String("htm") &&
         suffix != QLatin1String("xhtml"))
-        return fail(error, QStringLiteral("entry of a web project must be an HTML file: %1").arg(entry));
+        return fail(error,
+                    QStringLiteral("entry of a web project must be an HTML file: %1").arg(entry));
     project.entryFile = canonical;
     project.entryUrl  = QUrl::fromLocalFile(canonical);
 
@@ -187,7 +195,8 @@ std::optional<Project> loadProject(const QString& path, QString* error) {
         return fail(error, QStringLiteral("general.properties must be an object"));
     project.properties = properties.toObject();
     if (project.properties.size() > k_maxProperties)
-        return fail(error, QStringLiteral("project defines more than %1 properties").arg(k_maxProperties));
+        return fail(error,
+                    QStringLiteral("project defines more than %1 properties").arg(k_maxProperties));
     for (auto it = project.properties.constBegin(); it != project.properties.constEnd(); ++it) {
         if (! it.value().isObject())
             return fail(error, QStringLiteral("property '%1' must be an object").arg(it.key()));
@@ -212,7 +221,8 @@ std::optional<QJsonObject> validatePropertyValues(const QJsonObject& definitions
         if (value.isObject()) {
             const QJsonObject wrapped = value.toObject();
             if (wrapped.size() != 1 || ! wrapped.contains(QLatin1String("value"))) {
-                *error = QStringLiteral("property '%1': expected a value or {\"value\": ...}").arg(key);
+                *error =
+                    QStringLiteral("property '%1': expected a value or {\"value\": ...}").arg(key);
                 return std::nullopt;
             }
             value = wrapped.value(QLatin1String("value"));

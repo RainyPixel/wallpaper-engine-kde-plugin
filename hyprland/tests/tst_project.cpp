@@ -29,9 +29,7 @@ private:
         return writeFile(m_root + "/project.json", QJsonDocument(project).toJson());
     }
 
-    static QJsonObject web(const QString& file) {
-        return { { "type", "web" }, { "file", file } };
-    }
+    static QJsonObject web(const QString& file) { return { { "type", "web" }, { "file", file } }; }
 
     static QJsonObject definitions() {
         const auto doc = QJsonDocument::fromJson(R"({
@@ -88,7 +86,8 @@ private slots:
     }
 
     void typeIsCaseInsensitive_andBomAccepted() {
-        const QByteArray json = "\xEF\xBB\xBF" R"({"type": "Web", "file": "index.html"})";
+        const QByteArray json = "\xEF\xBB\xBF"
+                                R"({"type": "Web", "file": "index.html"})";
         QVERIFY(writeFile(m_root + "/project.json", json));
         QString error;
         QVERIFY2(load(&error), qPrintable(error));
@@ -158,8 +157,8 @@ private slots:
             << QByteArray(R"({"type": "web", "file": "index.html", "title": 1})");
         QTest::newRow("general array")
             << QByteArray(R"({"type": "web", "file": "index.html", "general": []})");
-        QTest::newRow("properties array")
-            << QByteArray(R"({"type": "web", "file": "index.html", "general": {"properties": []}})");
+        QTest::newRow("properties array") << QByteArray(
+            R"({"type": "web", "file": "index.html", "general": {"properties": []}})");
         QTest::newRow("property scalar") << QByteArray(
             R"({"type": "web", "file": "index.html", "general": {"properties": {"a": 1}}})");
     }
@@ -246,12 +245,13 @@ private slots:
     void invalidValues() {
         QFETCH(QByteArray, json);
         QString error;
-        QVERIFY(! validatePropertyValues(definitions(), QJsonDocument::fromJson(json).object(), &error));
+        QVERIFY(! validatePropertyValues(
+            definitions(), QJsonDocument::fromJson(json).object(), &error));
         QVERIFY(! error.isEmpty());
     }
 
     void textinputLengthLimited() {
-        QString error;
+        QString     error;
         QJsonObject values { { "label", QString(5000, QLatin1Char('a')) } };
         QVERIFY(! validatePropertyValues(definitions(), values, &error));
     }

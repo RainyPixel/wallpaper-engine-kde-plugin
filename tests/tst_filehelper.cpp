@@ -27,7 +27,7 @@ private:
     // Write `size` bytes to `filePath`; returns true on success.
     static bool writeBytes(const QString& filePath, int size, char fill = 'x') {
         QFile f(filePath);
-        if (!f.open(QIODevice::WriteOnly)) return false;
+        if (! f.open(QIODevice::WriteOnly)) return false;
         f.write(QByteArray(size, fill));
         return true;
     }
@@ -97,7 +97,7 @@ private slots:
 
     void getDirSize_emptyDir() {
         QTemporaryDir d;
-        FileHelper helper;
+        FileHelper    helper;
         QCOMPARE(helper.getDirSize(d.path()), qint64(0));
     }
 
@@ -162,7 +162,7 @@ private slots:
 
     // ── getFolderList ─────────────────────────────────────────────────────────
     void getFolderList_nonExistentDirNoFallback() {
-        FileHelper helper;
+        FileHelper  helper;
         QVariantMap result = helper.getFolderList("/tmp/wekde_test_nodir_xyz");
         QVERIFY(result.isEmpty());
     }
@@ -172,9 +172,9 @@ private slots:
         QDir(d.path()).mkdir("wallA");
         QDir(d.path()).mkdir("wallB");
 
-        FileHelper helper;
+        FileHelper  helper;
         QVariantMap result = helper.getFolderList(d.path());
-        QVERIFY(!result.isEmpty());
+        QVERIFY(! result.isEmpty());
         QCOMPARE(result["folder"].toString(), d.path());
 
         QVariantList items = result["items"].toList();
@@ -193,12 +193,12 @@ private slots:
         QTemporaryDir d;
         QDir(d.path()).mkdir("fallback");
 
-        FileHelper helper;
+        FileHelper  helper;
         QVariantMap opts;
-        opts["fallbacks"] = QStringList{d.filePath("fallback")};
+        opts["fallbacks"] = QStringList { d.filePath("fallback") };
 
         QVariantMap result = helper.getFolderList("/tmp/wekde_test_nodir_xyz", opts);
-        QVERIFY(!result.isEmpty());
+        QVERIFY(! result.isEmpty());
         QCOMPARE(result["folder"].toString(), d.filePath("fallback"));
     }
 
@@ -206,14 +206,13 @@ private slots:
         QTemporaryDir d;
         QDir(d.path()).mkdir("second");
 
-        FileHelper helper;
+        FileHelper  helper;
         QVariantMap opts;
         // first fallback does not exist; second does
-        opts["fallbacks"] =
-            QStringList{"/tmp/wekde_no_such_dir_1", d.filePath("second")};
+        opts["fallbacks"] = QStringList { "/tmp/wekde_no_such_dir_1", d.filePath("second") };
 
         QVariantMap result = helper.getFolderList("/tmp/wekde_no_such_dir_2", opts);
-        QVERIFY(!result.isEmpty());
+        QVERIFY(! result.isEmpty());
         QCOMPARE(result["folder"].toString(), d.filePath("second"));
     }
 
@@ -224,8 +223,8 @@ private slots:
 
         FileHelper helper;
         // Default: only_dir=true
-        QVariantMap result = helper.getFolderList(d.path());
-        QVariantList items = result["items"].toList();
+        QVariantMap  result = helper.getFolderList(d.path());
+        QVariantList items  = result["items"].toList();
         QCOMPARE(items.size(), 1);
         QCOMPARE(items[0].toMap()["name"].toString(), QString("sub"));
     }
@@ -235,20 +234,20 @@ private slots:
         QDir(d.path()).mkdir("sub");
         QVERIFY(writeBytes(d.filePath("file.txt"), 1));
 
-        FileHelper helper;
+        FileHelper  helper;
         QVariantMap opts;
         opts["only_dir"] = false;
 
-        QVariantMap result = helper.getFolderList(d.path(), opts);
-        QVariantList items = result["items"].toList();
+        QVariantMap  result = helper.getFolderList(d.path(), opts);
+        QVariantList items  = result["items"].toList();
         QCOMPARE(items.size(), 2);
     }
 
     void getFolderList_emptyDir_returnsEmptyItems() {
         QTemporaryDir d;
-        FileHelper helper;
-        QVariantMap result = helper.getFolderList(d.path());
-        QVERIFY(!result.isEmpty());
+        FileHelper    helper;
+        QVariantMap   result = helper.getFolderList(d.path());
+        QVERIFY(! result.isEmpty());
         QVERIFY(result["items"].toList().isEmpty());
     }
 
@@ -261,11 +260,11 @@ private slots:
     void config_readCorruptJson_returnsEmpty() {
         // Write a file with invalid JSON directly into the config dir so that
         // readWallpaperConfig finds it but QJsonDocument::fromJson returns null.
-        FileHelper helper;
+        FileHelper    helper;
         const QString id = "test_corrupt";
         const QString path =
-            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
-            + "/wekde/wallpaper/" + id + ".json";
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+            "/wekde/wallpaper/" + id + ".json";
         QDir().mkpath(QFileInfo(path).absolutePath());
         QFile f(path);
         QVERIFY(f.open(QIODevice::WriteOnly));
@@ -278,7 +277,7 @@ private slots:
     }
 
     void config_writeAndRead_roundTrip() {
-        FileHelper helper;
+        FileHelper    helper;
         const QString id = "test_roundtrip";
 
         QVariantMap cfg;
@@ -296,13 +295,13 @@ private slots:
     }
 
     void config_write_mergesPreviousValues() {
-        FileHelper helper;
+        FileHelper    helper;
         const QString id = "test_merge";
 
-        helper.writeWallpaperConfig(id, {{"volume", 50}, {"fps", 60}});
+        helper.writeWallpaperConfig(id, { { "volume", 50 }, { "fps", 60 } });
 
         // Partial update: only change volume
-        helper.writeWallpaperConfig(id, {{"volume", 80}});
+        helper.writeWallpaperConfig(id, { { "volume", 80 } });
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["volume"].toInt(), 80);
@@ -312,11 +311,11 @@ private slots:
     }
 
     void config_write_addsNewKey() {
-        FileHelper helper;
+        FileHelper    helper;
         const QString id = "test_newkey";
 
-        helper.writeWallpaperConfig(id, {{"a", 1}});
-        helper.writeWallpaperConfig(id, {{"b", 2}});
+        helper.writeWallpaperConfig(id, { { "a", 1 } });
+        helper.writeWallpaperConfig(id, { { "b", 2 } });
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["a"].toInt(), 1);
@@ -326,11 +325,11 @@ private slots:
     }
 
     void config_reset_removesConfig() {
-        FileHelper helper;
+        FileHelper    helper;
         const QString id = "test_reset";
 
-        helper.writeWallpaperConfig(id, {{"key", "value"}});
-        QVERIFY(!helper.readWallpaperConfig(id).isEmpty());
+        helper.writeWallpaperConfig(id, { { "key", "value" } });
+        QVERIFY(! helper.readWallpaperConfig(id).isEmpty());
 
         helper.resetWallpaperConfig(id);
         QVERIFY(helper.readWallpaperConfig(id).isEmpty());
@@ -344,10 +343,10 @@ private slots:
     }
 
     void config_stringValues_preserved() {
-        FileHelper helper;
+        FileHelper    helper;
         const QString id = "test_strings";
 
-        helper.writeWallpaperConfig(id, {{"name", "My Wallpaper"}, {"path", "/some/path"}});
+        helper.writeWallpaperConfig(id, { { "name", "My Wallpaper" }, { "path", "/some/path" } });
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["name"].toString(), QString("My Wallpaper"));

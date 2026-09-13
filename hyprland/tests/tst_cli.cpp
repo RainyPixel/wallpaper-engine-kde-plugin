@@ -90,17 +90,24 @@ private slots:
         QCOMPARE(summary.value("ok").toBool(), true);
         QCOMPARE(summary.value("type").toString(), QStringLiteral("web"));
         QVERIFY(summary.value("url").toString().startsWith("file:///"));
-        QCOMPARE(summary.value("properties").toObject().value("speed").toObject().value("value").toDouble(),
+        QCOMPARE(summary.value("properties")
+                     .toObject()
+                     .value("speed")
+                     .toObject()
+                     .value("value")
+                     .toDouble(),
                  1.0);
     }
 
     void checkWithProperties() {
-        const Result ok = run({ "check", WEHYPR_FIXTURE, "--properties", R"({"speed":2,"shape":"square"})" });
+        const Result ok =
+            run({ "check", WEHYPR_FIXTURE, "--properties", R"({"speed":2,"shape":"square"})" });
         QCOMPARE(ok.code, 0);
         const QJsonObject properties =
             QJsonDocument::fromJson(ok.out).object().value("properties").toObject();
         QCOMPARE(properties.value("speed").toObject().value("value").toDouble(), 2.0);
-        QCOMPARE(properties.value("shape").toObject().value("value").toString(), QStringLiteral("square"));
+        QCOMPARE(properties.value("shape").toObject().value("value").toString(),
+                 QStringLiteral("square"));
 
         const Result rejected = run({ "check", WEHYPR_FIXTURE, "--properties", R"({"speed":9})" });
         QCOMPARE(rejected.code, 3);
@@ -138,8 +145,8 @@ private slots:
     void runWhileInstanceLocked() {
         const QString dir = m_runtime.path() + "/wallpaper-engine-hyprland";
         QVERIFY(QDir().mkpath(dir));
-        QVERIFY(QFile::setPermissions(dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                               QFileDevice::ExeOwner));
+        QVERIFY(QFile::setPermissions(
+            dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         QLockFile lock(dir + "/locked.lock");
         lock.setStaleLockTime(0);
         QVERIFY(lock.tryLock(0));

@@ -63,4 +63,9 @@ Item {
         fileHelper.resetWallpaperConfig(id);
         return _makePromise(null);
     }
+
+    // No promise here, the callers bind the map straight into properties
+    function detect_steam(configuredLibrary) {
+        return fileHelper.detectSteam(configuredLibrary || '');
+    }
 }

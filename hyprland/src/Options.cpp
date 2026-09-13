@@ -17,7 +17,8 @@ struct CommandName {
 
 constexpr CommandName k_commands[] = {
     { "run", Command::Run },           { "check", Command::Check },
-    { "outputs", Command::Outputs },   { "status", Command::Status },
+    { "outputs", Command::Outputs },   { "list", Command::List },
+    { "browse", Command::Browse },     { "status", Command::Status },
     { "pause", Command::Pause },       { "resume", Command::Resume },
     { "quit", Command::Quit },         { "set-properties", Command::SetProperties },
     { "help", Command::Help },         { "--help", Command::Help },
@@ -117,8 +118,20 @@ ParseResult parseCommandLine(const QStringList& arguments) {
                             gpuRasterOpt,
                             durationOpt });
         break;
+    case Command::Browse:
+        // The flags browse hands to the wallpaper it starts.
+        parser.addOptions({ instanceOpt,
+                            outputOpt,
+                            allOutputsOpt,
+                            fpsOpt,
+                            allowRemoteOpt,
+                            audioOpt,
+                            diagnosticsOpt,
+                            gpuRasterOpt });
+        break;
     case Command::Check: parser.addOption(propertiesOpt); break;
-    case Command::Outputs: break;
+    case Command::Outputs:
+    case Command::List: break;
     default: parser.addOption(instanceOpt); break;
     }
 
@@ -143,6 +156,13 @@ ParseResult parseCommandLine(const QStringList& arguments) {
 
     switch (command) {
     case Command::Run:
+        // Without a project run falls back to the wallpaper picked in the browser.
+        if (positional.size() > 1 || (! positional.isEmpty() && positional.first().isEmpty())) {
+            result.error = QStringLiteral("expected at most one project path");
+            return result;
+        }
+        if (! positional.isEmpty()) options.project = positional.first();
+        break;
     case Command::Check:
         if (positional.size() != 1 || positional.first().isEmpty()) {
             result.error = QStringLiteral("expected exactly one project path");
@@ -166,7 +186,8 @@ ParseResult parseCommandLine(const QStringList& arguments) {
         break;
     }
 
-    if (command != Command::Run) return result;
+    if (command != Command::Run && command != Command::Browse) return result;
+    const bool isRun = command == Command::Run;
 
     for (const QString& output : parser.values(outputOpt)) {
         if (output.isEmpty()) {
@@ -184,7 +205,7 @@ ParseResult parseCommandLine(const QStringList& arguments) {
         result.error = QStringLiteral("--fps must be an integer between 1 and 240");
         return result;
     }
-    if (parser.isSet(durationOpt) &&
+    if (isRun && parser.isSet(durationOpt) &&
         ! parseInt(parser.value(durationOpt), 0, 86400, &options.durationSeconds)) {
         result.error = QStringLiteral("--duration must be an integer between 0 and 86400");
         return result;
@@ -202,7 +223,7 @@ ParseResult parseCommandLine(const QStringList& arguments) {
     }
     options.allowRemote = parser.isSet(allowRemoteOpt);
     options.audio       = parser.isSet(audioOpt);
-    options.window      = parser.isSet(windowOpt);
+    options.window      = isRun && parser.isSet(windowOpt);
     options.diagnostics = parser.isSet(diagnosticsOpt);
     return result;
 }
@@ -212,15 +233,18 @@ QString usage() {
         R"(Usage: wallpaper-engine-hyprland <command> [options]
 
 Commands:
-  run <project>              Show a web wallpaper on layer-shell surfaces
+  run [project]              Show a web wallpaper on layer-shell surfaces
   check <project>            Validate a project and print a JSON summary
+  list                       List the installed wallpapers as JSON
+  browse                     Pick a wallpaper in a window
   outputs                    List connected outputs as JSON
   status                     Print the state of a running host as JSON
   pause | resume | quit      Control a running host
   set-properties <json>      Change user properties of the running wallpaper
   help | version
 
-<project> is a Wallpaper Engine project directory or its project.json.
+<project> is a Wallpaper Engine project directory, its project.json, or a
+workshop id. Without <project>, run shows the wallpaper last picked in browse.
 
 Options for run:
   --output <name>            Output to cover; repeat for several outputs
@@ -240,6 +264,10 @@ when several outputs are connected.
 
 Options for run and the control commands:
   --instance <name>          Instance name (default "default")
+
+browse takes the run options above plus --instance, except --properties,
+--window and --duration, and passes them to the wallpaper it starts. Without
+an output selection it covers every output.
 
 check also accepts --properties.
 

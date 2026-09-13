@@ -4,8 +4,10 @@
 #include <QtTest>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QLockFile>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -97,6 +99,33 @@ private slots:
                      .value("value")
                      .toDouble(),
                  1.0);
+    }
+
+    void listWallpapers() {
+        const Result result = run({ "list" });
+        QCOMPARE(result.code, 0);
+        QJsonParseError     error;
+        const QJsonDocument doc = QJsonDocument::fromJson(result.out, &error);
+        QCOMPARE(error.error, QJsonParseError::NoError);
+        QVERIFY(doc.isArray());
+        // Empty without a Steam installation; every entry is complete where there is one.
+        for (const QJsonValue& value : doc.array()) {
+            const QJsonObject item = value.toObject();
+            QVERIFY(! item.value("id").toString().isEmpty());
+            QVERIFY(item.value("path").toString().startsWith('/'));
+            QVERIFY(item.contains("supported"));
+        }
+    }
+
+    void runWithoutProjectOrState() {
+        QTemporaryDir config;
+        QVERIFY(config.isValid());
+        QProcessEnvironment env = m_env;
+        env.insert("XDG_CONFIG_HOME", config.path());
+
+        const Result result = run({ "run", "--instance", "tst-cli-nostate" }, env);
+        QCOMPARE(result.code, 2);
+        QVERIFY(result.err.contains("no project given"));
     }
 
     void checkWithProperties() {

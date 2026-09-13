@@ -48,6 +48,53 @@ private slots:
         QCOMPARE(o.durationSeconds, 0);
     }
 
+    void run_withoutProject_usesSavedChoice() {
+        const ParseResult result = parse({ "run", "--instance", "desk" });
+        QVERIFY2(result.ok(), qPrintable(result.error));
+        QCOMPARE(result.options.command, Command::Run);
+        QVERIFY(result.options.project.isEmpty());
+        QCOMPARE(result.options.instance, QStringLiteral("desk"));
+    }
+
+    void list_takesNoArguments() {
+        const ParseResult result = parse({ "list" });
+        QVERIFY2(result.ok(), qPrintable(result.error));
+        QCOMPARE(result.options.command, Command::List);
+        QVERIFY(! parse({ "list", "/tmp/project" }).ok());
+        QVERIFY(! parse({ "list", "--instance", "desk" }).ok());
+        QVERIFY(! isControlCommand(Command::List));
+    }
+
+    void browse_takesRunFlags() {
+        const ParseResult result = parse({ "browse",
+                                           "--instance",
+                                           "desk",
+                                           "--output",
+                                           "DP-1",
+                                           "--fps",
+                                           "45",
+                                           "--audio",
+                                           "--allow-remote",
+                                           "--diagnostics",
+                                           "--gpu-rasterization",
+                                           "auto" });
+        QVERIFY2(result.ok(), qPrintable(result.error));
+        const Options& o = result.options;
+        QCOMPARE(o.command, Command::Browse);
+        QCOMPARE(o.instance, QStringLiteral("desk"));
+        QCOMPARE(o.outputs, QStringList { "DP-1" });
+        QCOMPARE(o.fps, 45);
+        QVERIFY(o.audio && o.allowRemote && o.diagnostics);
+        QVERIFY(! o.disableGpuRasterization);
+        QVERIFY(! o.window);
+
+        QVERIFY(parse({ "browse", "--all-outputs" }).ok());
+        QVERIFY(! parse({ "browse", "/tmp/project" }).ok());
+        QVERIFY(! parse({ "browse", "--duration", "10" }).ok());
+        QVERIFY(! parse({ "browse", "--fps", "0" }).ok());
+        QVERIFY(! isControlCommand(Command::Browse));
+    }
+
     void run_allOptions() {
         const ParseResult result = parse({ "run",
                                            "p",
@@ -83,7 +130,6 @@ private slots:
 
     void run_invalidValues_data() {
         QTest::addColumn<QStringList>("args");
-        QTest::newRow("no project") << QStringList { "run" };
         QTest::newRow("two projects") << QStringList { "run", "a", "b" };
         QTest::newRow("fps zero") << QStringList { "run", "p", "--fps", "0" };
         QTest::newRow("fps text") << QStringList { "run", "p", "--fps", "fast" };

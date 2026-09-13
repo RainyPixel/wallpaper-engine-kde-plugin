@@ -21,7 +21,7 @@ option(WEHYPR_INTEGRATION_TESTS
 
 include(GNUInstallDirs)
 
-find_package(Qt6 6.7 REQUIRED COMPONENTS Core Network Gui Qml Quick)
+find_package(Qt6 6.7 REQUIRED COMPONENTS Core Network Gui Qml Quick QuickControls2)
 find_package(Qt6 6.7 QUIET COMPONENTS WebEngineQuick)
 if(NOT TARGET Qt6::WebEngineQuick)
   message(FATAL_ERROR
@@ -57,15 +57,23 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set(WEHYPR_WARNINGS -Wall -Wextra)
 endif()
 
+# The Steam detector is shared with the KDE plugin and compiled in directly:
+# src/ exports nothing (hidden visibility plus --exclude-libs,ALL).
 add_library(wehypr-core STATIC
   src/Ipc.cpp
   src/Ipc.hpp
+  src/Library.cpp
+  src/Library.hpp
   src/Options.cpp
   src/Options.hpp
   src/ProjectConfig.cpp
   src/ProjectConfig.hpp
+  src/State.cpp
+  src/State.hpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/SteamPaths.cpp
 )
 target_include_directories(wehypr-core PUBLIC src)
+target_include_directories(wehypr-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 target_link_libraries(wehypr-core PUBLIC Qt6::Core Qt6::Network)
 target_compile_options(wehypr-core PRIVATE ${WEHYPR_WARNINGS})
 
@@ -76,10 +84,12 @@ qt_add_executable(wallpaper-engine-hyprland
 )
 set_source_files_properties(qml/WallpaperSurface.qml
   PROPERTIES QT_RESOURCE_ALIAS WallpaperSurface.qml)
+set_source_files_properties(qml/Browser.qml
+  PROPERTIES QT_RESOURCE_ALIAS Browser.qml)
 qt_add_qml_module(wallpaper-engine-hyprland
   URI WallpaperEngineHyprland
   VERSION 1.0
-  QML_FILES qml/WallpaperSurface.qml
+  QML_FILES qml/WallpaperSurface.qml qml/Browser.qml
 )
 target_compile_definitions(wallpaper-engine-hyprland
   PRIVATE WEHYPR_VERSION="${PROJECT_VERSION}")
@@ -93,6 +103,7 @@ target_link_libraries(wallpaper-engine-hyprland
   Qt6::Gui
   Qt6::Qml
   Qt6::Quick
+  Qt6::QuickControls2
   Qt6::WebEngineQuick
   LayerShellQt::Interface
 )
@@ -103,7 +114,7 @@ if(WEHYPR_BUILD_TESTS)
   enable_testing()
   find_package(Qt6 6.7 REQUIRED COMPONENTS Test)
 
-  foreach(test_name tst_options tst_project tst_ipc)
+  foreach(test_name tst_options tst_project tst_ipc tst_library)
     qt_add_executable(${test_name} tests/${test_name}.cpp)
     target_link_libraries(${test_name} PRIVATE wehypr-core Qt6::Test)
     target_compile_options(${test_name} PRIVATE ${WEHYPR_WARNINGS})
@@ -120,7 +131,7 @@ if(WEHYPR_BUILD_TESTS)
   add_dependencies(tst_cli wallpaper-engine-hyprland)
   add_test(NAME tst_cli COMMAND tst_cli)
 
-  set_tests_properties(tst_options tst_project tst_ipc tst_cli
+  set_tests_properties(tst_options tst_project tst_ipc tst_library tst_cli
     PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" LABELS unit)
 endif()
 

@@ -26,6 +26,8 @@ enum class Command
     Run,
     Check,
     Outputs,
+    List,
+    Browse,
     Status,
     Pause,
     Resume,

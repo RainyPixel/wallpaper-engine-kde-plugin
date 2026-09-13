@@ -109,6 +109,9 @@ ColumnLayout {
         `, this);
     }
 
+    // Steam libraries found on this machine, see FileHelper::detectSteam
+    property var steamDetect: pyext.detect_steam(cfg_SteamLibraryPath)
+
     // Global Mode: on Apply, push the shared keys into ~/.config/wekde/global.json
     // and wake the running wallpaper(s) (the config dialog may be another process).
     GlobalConfig {
@@ -125,6 +128,10 @@ ColumnLayout {
     Component.onCompleted: {
         initialWallpaperSource = cfg_WallpaperSource;
         initialWallpaperWorkShopId = cfg_WallpaperWorkShopId;
+        // Seed the library from detection, the folder button stays an override.
+        // Filling the value keeps every "is it configured" test below correct.
+        if(!cfg_SteamLibraryPath && steamDetect.library)
+            cfg_SteamLibraryPath = steamDetect.library;
     }
 
     function saveConfig() {
@@ -153,8 +160,12 @@ ColumnLayout {
 
     WallpaperListModel {
         id: wpListModel
-        workshopDirs: Common.getProjectDirs(cfg_SteamLibraryPath)
-        globalConfigPath: Common.getGlobalConfigPath(cfg_SteamLibraryPath)
+        // Detection already resolved and deduplicated every library; the
+        // string-built dirs are the fallback for a tree it does not know.
+        workshopDirs: steamDetect.projectDirs.length
+            ? steamDetect.projectDirs
+            : Common.getProjectDirs(cfg_SteamLibraryPath)
+        globalConfigPath: steamDetect.globalConfig || Common.getGlobalConfigPath(cfg_SteamLibraryPath)
         filterStr: cfg_FilterStr
         sortMode: cfg_SortMode
         initItemOp: (item) => {

@@ -187,7 +187,7 @@ RowLayout {
                             return `Python helper run failed: ${pyext.log}`;
                         }
                         if(!cfg_SteamLibraryPath)
-                            return "Select your steam library through the folder selecting button above";
+                            return "No steam library with Wallpaper Engine found, select one with the folder button above";
                         if(wpListModel.countNoFilter > 0)
                             return `Found ${wpListModel.countNoFilter} wallpapers, but none of them matched filters`;
                         return `There are no wallpapers in steam library`;

@@ -28,7 +28,10 @@ paru -S wallpaper-engine-kde-plugin-git
 
 ### Fedora / rpm-ostree / Bazzite (RPM)
 
-Download the latest RPM from [Releases](https://github.com/CaptSilver/wallpaper-engine-kde-plugin/releases):
+A prebuilt RPM from February 2026 is available from the
+[CaptSilver fork](https://github.com/CaptSilver/wallpaper-engine-kde-plugin/releases). It predates
+the current code, so for the current version build the RPM yourself as described under
+[Build RPM package](#build-rpm-package-fedora).
 
 ```sh
 curl -LO https://github.com/CaptSilver/wallpaper-engine-kde-plugin/releases/download/v1.0/wallpaper-engine-kde-plugin-qt6-0-1.fc43.x86_64.rpm
@@ -50,7 +53,7 @@ rpm-ostree install ./wallpaper-engine-kde-plugin-qt6-0-1.fc43.x86_64.rpm
 Arch:
 ```sh
 sudo pacman -S extra-cmake-modules plasma-framework gst-libav ninja \
-base-devel mpv qt6-declarative qt6-websockets qt6-webchannel vulkan-headers cmake lz4
+base-devel mpv qt6-declarative qt6-webchannel vulkan-headers cmake lz4
 ```
 
 Fedora:
@@ -67,13 +70,13 @@ sudo dnf install -y ffmpeg-devel --allowerasing
 sudo dnf install vulkan-headers plasma-workspace-devel kf6-plasma-devel \
     kf6-kcoreaddons-devel kf6-kpackage-devel gstreamer1-libav \
     lz4-devel mpv-libs-devel qt6-qtbase-private-devel libplasma-devel \
-    qt6-qtwebchannel-devel qt6-qtwebsockets-devel cmake extra-cmake-modules
+    qt6-qtwebchannel-devel cmake extra-cmake-modules
 ```
 
 #### Build and Install
 ```sh
 # Download source
-git clone https://github.com/captsilver/wallpaper-engine-kde-plugin.git
+git clone https://github.com/RainyPixel/wallpaper-engine-kde-plugin.git
 cd wallpaper-engine-kde-plugin
 
 # Download submodules
@@ -94,8 +97,13 @@ systemctl --user restart plasma-plasmashell.service
 
 Useful for rpm-ostree/Bazzite systems where layered packages survive updates.
 
+On Bazzite and other rpm-ostree hosts `dnf` and `rpmbuild` do not run directly, so do the build
+inside a Fedora toolbox or distrobox of the same release as the host (`rpm -E %fedora` prints it)
+and skip the tmpfs mount there. Your home directory is shared with the container, so afterwards
+layer the RPM from the host.
+
 ```sh
-git clone https://github.com/captsilver/wallpaper-engine-kde-plugin.git
+git clone https://github.com/RainyPixel/wallpaper-engine-kde-plugin.git
 cd wallpaper-engine-kde-plugin
 
 # Install build dependencies from spec
@@ -103,10 +111,6 @@ sudo dnf builddep ./rpm/wek.spec
 
 # Initialise submodules
 git submodule update --init --force --recursive
-
-# Copy QML plugin files (required at runtime)
-mkdir -p ~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde/
-cp -R ./plugin/* ~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde/
 
 # Use tmpfs for the build directory to avoid slow disk writes
 sudo mount -t tmpfs tmpfs ~/rpmbuild/BUILD
@@ -136,6 +140,11 @@ other drives. Wallpapers from every library are listed together. Use the folder 
 Wallpapers tab to override the detected library, for example to pick a second Steam installation.
 
 > **Note:** After an rpm-ostree/Bazzite install you may need to reboot before the plugin starts working. For cmake installs, restarting plasmashell is enough: `systemctl --user restart plasma-plasmashell.service`
+
+If the list stays empty and you copied the plugin into
+`~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde` at some point, remove that
+copy. Plasma prefers it over the installed package, and it stops matching the plugin's native part
+as soon as either one is updated.
 
 ### Uninstall
 1. Remove files listed in `build/install_manifest.txt`

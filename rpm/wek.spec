@@ -1,10 +1,12 @@
 Name:    wallpaper-engine-kde-plugin-qt6
 Version: 0
-Release: 1%{?dist}
+# A fixed release made every build 0-1, so a rebuilt package never replaced
+# the one already layered on rpm-ostree.
+Release: %(date -u +%%Y%%m%%d%%H%%M)%{?dist}
 Summary: A KDE wallpaper plugin integrating Wallpaper Engine (Plasma 6)
 
 License: GPL-2.0-only
-URL:     https://github.com/captsilver/wallpaper-engine-kde-plugin
+URL:     https://github.com/RainyPixel/wallpaper-engine-kde-plugin
 
 # Built from a live git checkout.
 
@@ -17,14 +19,17 @@ BuildRequires: kf6-kpackage-devel
 BuildRequires: lz4-devel
 BuildRequires: mpv-libs-devel
 BuildRequires: qt6-qtbase-private-devel
-BuildRequires: qt6-qtwebchannel-devel qt6-qtwebsockets-devel
+BuildRequires: qt6-qtwebchannel-devel
 
+# Shared libraries (Qt, mpv, lz4, Vulkan) are added by rpm's automatic
+# dependency generator. QML imports are not, so they are required by the
+# qt6qml() names Fedora's Qt packages provide.
 Requires: plasma-workspace
 Requires: gstreamer1-libav
-Requires: mpv-libs
-Requires: lz4
-Requires: qt6-qtwebchannel
-Requires: qt6-qtwebsockets
+Requires: qt6qml(QtWebChannel)
+Requires: qt6qml(QtWebEngine)
+Requires: qt6qml(QtMultimedia)
+Requires: qt6qml(Qt5Compat.GraphicalEffects)
 
 %global _enable_debug_package 0
 %global debug_package %{nil}
@@ -58,6 +63,11 @@ DESTDIR=%{buildroot} cmake --install %{_builddir}/wek-build \
 %{_datadir}/*
 
 %changelog
+* Mon Sep 14 2026 packager - 0
+- Drop qt6-qtwebsockets: nothing uses it, and Fedora ships no QML module for it
+- Require the QML modules by their qt6qml() provides, leave libraries to rpm
+- Use a build timestamp as release so rebuilds upgrade
+
 * Sat Feb 28 2026 packager - 0-1
 - Add kf6-kcoreaddons-devel and kf6-kpackage-devel to BuildRequires
 - Port to RainyPixel fork: drop python3-websockets and Qt5 dep,

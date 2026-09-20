@@ -318,7 +318,7 @@ private:
 
             m_scene               = std::move(scene);
             m_scene->cache_passes = main_handler.cachePasses();
-            m_rg = sceneToRenderGraph(*m_scene);
+            m_rg                  = sceneToRenderGraph(*m_scene);
 
             if (main_handler.isGenGraphviz()) m_rg->ToGraphviz("graph.dot");
             m_render->compileRenderGraph(*m_scene, *m_rg);

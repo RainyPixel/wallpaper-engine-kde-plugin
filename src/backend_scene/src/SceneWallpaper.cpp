@@ -309,10 +309,15 @@ private:
         }
     }
     MHANDLER_CMD(SET_SCENE) {
-        if (msg->findObject("scene", &m_scene)) {
-            m_scene->cache_passes = main_handler.cachePasses();
+        // Store the incoming scene separately so the outgoing scene remains
+        // alive until queued GPU work completes and its graph is destroyed.
+        std::shared_ptr<Scene> scene;
+        if (msg->findObject("scene", &scene)) {
             m_render->releaseMirror();
             if (m_rg) m_render->clearLastRenderGraph();
+
+            m_scene               = std::move(scene);
+            m_scene->cache_passes = main_handler.cachePasses();
             m_rg = sceneToRenderGraph(*m_scene);
 
             if (main_handler.isGenGraphviz()) m_rg->ToGraphviz("graph.dot");

@@ -19,7 +19,17 @@ set(CMAKE_AUTOMOC ON)
 add_executable(tst_filehelper
     tst_filehelper.cpp
     ${WEKDE_SRC_DIR}/FileHelper.cpp
+    ${WEKDE_SRC_DIR}/SteamPaths.cpp
 )
 target_include_directories(tst_filehelper PRIVATE ${WEKDE_SRC_DIR})
 target_link_libraries(tst_filehelper PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME tst_filehelper COMMAND tst_filehelper -v2)
+
+# ── Steam path detection unit tests ────────────────────────────────────────────
+add_executable(tst_steampaths
+    tst_steampaths.cpp
+    ${WEKDE_SRC_DIR}/SteamPaths.cpp
+)
+target_include_directories(tst_steampaths PRIVATE ${WEKDE_SRC_DIR})
+target_link_libraries(tst_steampaths PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME tst_steampaths COMMAND tst_steampaths -v2)

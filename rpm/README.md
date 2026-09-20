@@ -3,6 +3,11 @@
 Building an RPM is the recommended approach for immutable systems (Bazzite, Silverblue, etc.)
 where layered packages survive OS updates.
 
+On Bazzite and other rpm-ostree hosts `dnf` and `rpmbuild` do not run directly, so do the build
+inside a Fedora toolbox or distrobox of the same release as the host (`rpm -E %fedora` prints it)
+and skip the tmpfs mount there. Your home directory is shared with the container, so afterwards
+layer the RPM from the host.
+
 ### Prerequisites: RPM Fusion + ffmpeg
 
 ```sh
@@ -17,7 +22,7 @@ sudo dnf install -y ffmpeg-devel --allowerasing
 ### Build steps
 
 ```sh
-git clone https://github.com/captsilver/wallpaper-engine-kde-plugin.git
+git clone https://github.com/RainyPixel/wallpaper-engine-kde-plugin.git
 cd wallpaper-engine-kde-plugin
 
 # Install all build dependencies declared in the spec
@@ -25,10 +30,6 @@ sudo dnf builddep ./rpm/wek.spec
 
 # Initialise submodules
 git submodule update --init --force --recursive
-
-# Copy QML plugin files (required at runtime)
-mkdir -p ~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde/
-cp -R ./plugin/* ~/.local/share/plasma/wallpapers/com.github.catsout.wallpaperEngineKde/
 
 # Use tmpfs to speed up the build and avoid wearing disk
 sudo mount -t tmpfs tmpfs ~/rpmbuild/BUILD

@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QVariantList>
@@ -23,6 +24,43 @@ class TestFileHelper : public QObject {
 
 private:
     QTemporaryDir m_tmp;
+
+    // A steam library laid out the way Steam does, enough of it for
+    // steam::detectLibrariesIn() to accept it.
+    static bool makeLibrary(const QString& root, bool withInstall, bool withWorkshop) {
+        const QString steamapps = root + "/steamapps";
+        if (! QDir().mkpath(steamapps)) return false;
+
+        if (withInstall) {
+            const QString install = steamapps + "/common/wallpaper_engine";
+            if (! QDir().mkpath(install + "/assets")) return false;
+            if (! QDir().mkpath(install + "/projects/defaultprojects")) return false;
+            if (! QDir().mkpath(install + "/projects/myprojects")) return false;
+            if (! writeText(install + "/config.json", "{}")) return false;
+            if (! writeText(steamapps + "/appmanifest_431960.acf",
+                            "\"AppState\"\n{\n\t\"appid\"\t\t\"431960\"\n"
+                            "\t\"installdir\"\t\t\"wallpaper_engine\"\n}\n"))
+                return false;
+        }
+        if (withWorkshop && ! QDir().mkpath(steamapps + "/workshop/content/431960/1234567890"))
+            return false;
+        return true;
+    }
+
+    static bool writeText(const QString& filePath, const QByteArray& content) {
+        if (! QDir().mkpath(QFileInfo(filePath).absolutePath())) return false;
+        QFile f(filePath);
+        if (! f.open(QIODevice::WriteOnly)) return false;
+        return f.write(content) == content.size();
+    }
+
+    // Every returned path must be native, absolute and without a trailing slash.
+    static void checkPathShape(const QString& path) {
+        if (path.isEmpty()) return;
+        QVERIFY(! path.startsWith("file:"));
+        QVERIFY(path.startsWith('/'));
+        QVERIFY(! path.endsWith('/'));
+    }
 
     // Write `size` bytes to `filePath`; returns true on success.
     static bool writeBytes(const QString& filePath, int size, char fill = 'x') {
@@ -354,6 +392,140 @@ private slots:
         QCOMPARE(got["path"].toString(), QString("/some/path"));
 
         helper.resetWallpaperConfig(id);
+    }
+
+    // ── detectSteam ───────────────────────────────────────────────────────────
+    void detectSteam_noSteamRoot_allEmpty() {
+        FileHelper  helper;
+        QVariantMap got = helper.detectSteamIn({ m_tmp.filePath("no_such_steam") });
+        QVERIFY(got["library"].toString().isEmpty());
+        QVERIFY(got["projectDirs"].toStringList().isEmpty());
+        QVERIFY(got["assets"].toString().isEmpty());
+        QVERIFY(got["globalConfig"].toString().isEmpty());
+    }
+
+    void detectSteam_singleLibrary() {
+        const QString root = m_tmp.filePath("single/root");
+        QVERIFY(makeLibrary(root, true, true));
+
+        FileHelper  helper;
+        QVariantMap got = helper.detectSteamIn({ root });
+        QCOMPARE(got["library"].toString(), QFileInfo(root).canonicalFilePath());
+
+        // workshop content plus the install's defaultprojects and myprojects
+        QStringList projectDirs = got["projectDirs"].toStringList();
+        QCOMPARE(projectDirs.size(), 3);
+        QVERIFY(projectDirs.first().endsWith("/steamapps/workshop/content/431960"));
+        QVERIFY(projectDirs.at(1).endsWith("/projects/defaultprojects"));
+        QVERIFY(projectDirs.at(2).endsWith("/projects/myprojects"));
+        QVERIFY(got["assets"].toString().endsWith("/wallpaper_engine/assets"));
+        QVERIFY(got["globalConfig"].toString().endsWith("/wallpaper_engine/config.json"));
+    }
+
+    void detectSteam_multipleLibraries_installFirst() {
+        const QString root  = m_tmp.filePath("multi/root");
+        const QString extra = m_tmp.filePath("multi/extra");
+        // The app and one workshop tree in the steam root, a second workshop
+        // tree on another library registered in libraryfolders.vdf.
+        QVERIFY(makeLibrary(root, true, true));
+        QVERIFY(makeLibrary(extra, false, true));
+        QVERIFY(writeText(root + "/steamapps/libraryfolders.vdf",
+                          "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"" +
+                              root.toUtf8() + "\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"" +
+                              extra.toUtf8() + "\"\n\t}\n}\n"));
+
+        FileHelper  helper;
+        QVariantMap got = helper.detectSteamIn({ root });
+
+        // library is the one carrying the install: it owns assets/ and config.json
+        QCOMPARE(got["library"].toString(), QFileInfo(root).canonicalFilePath());
+        QVERIFY(got["assets"].toString().startsWith(QFileInfo(root).canonicalFilePath()));
+
+        // both libraries' workshop trees, then the install's project dirs
+        QStringList projectDirs = got["projectDirs"].toStringList();
+        QCOMPARE(projectDirs.size(), 4);
+        QVERIFY(projectDirs.first().startsWith(QFileInfo(root).canonicalFilePath()));
+        QVERIFY(projectDirs.at(1).startsWith(QFileInfo(extra).canonicalFilePath()));
+    }
+
+    void detectSteam_workshopOnly_noAssets() {
+        const QString root = m_tmp.filePath("wsonly/root");
+        QVERIFY(makeLibrary(root, false, true));
+
+        FileHelper  helper;
+        QVariantMap got = helper.detectSteamIn({ root });
+        QCOMPARE(got["library"].toString(), QFileInfo(root).canonicalFilePath());
+        QCOMPARE(got["projectDirs"].toStringList().size(), 1);
+        QVERIFY(got["assets"].toString().isEmpty());
+        QVERIFY(got["globalConfig"].toString().isEmpty());
+    }
+
+    void detectSteam_pathsAreNativeWithoutTrailingSlash() {
+        const QString root = m_tmp.filePath("shape/root");
+        QVERIFY(makeLibrary(root, true, true));
+
+        FileHelper  helper;
+        QVariantMap got = helper.detectSteamIn({ root });
+        checkPathShape(got["library"].toString());
+        checkPathShape(got["assets"].toString());
+        checkPathShape(got["globalConfig"].toString());
+        for (const QString& dir : got["projectDirs"].toStringList()) checkPathShape(dir);
+    }
+
+    void detectSteam_configuredLibraryWinsForAssets() {
+        const QString first  = m_tmp.filePath("override/first");
+        const QString second = m_tmp.filePath("override/second");
+        // Two Steam installs, both carrying the app: a native one and, say, a
+        // flatpak one. The folder button has to stay a real override.
+        QVERIFY(makeLibrary(first, true, true));
+        QVERIFY(makeLibrary(second, true, true));
+
+        FileHelper        helper;
+        const QStringList roots { first, second };
+        QVERIFY(helper.detectSteamIn(roots, QString())["assets"].toString().startsWith(
+            QFileInfo(first).canonicalFilePath()));
+        QVERIFY(helper.detectSteamIn(roots, second)["assets"].toString().startsWith(
+            QFileInfo(second).canonicalFilePath()));
+        QVERIFY(helper.detectSteamIn(roots, second)["globalConfig"].toString().startsWith(
+            QFileInfo(second).canonicalFilePath()));
+    }
+
+    void detectSteam_symlinkedLibraryIsListedOnce() {
+        const QString root = m_tmp.filePath("symlink/root");
+        QVERIFY(makeLibrary(root, true, true));
+        // ~/.local/share/Steam is a symlink to ~/.steam/debian-installation on
+        // Debian, and both spellings are probed.
+        const QString link = m_tmp.filePath("symlink/alias");
+        QVERIFY(QFile::link(root, link));
+
+        FileHelper        helper;
+        const QStringList dirs =
+            helper.detectSteamIn({ root, link }, link)["projectDirs"].toStringList();
+        QCOMPARE(dirs.size(), QSet<QString>(dirs.cbegin(), dirs.cend()).size());
+        QCOMPARE(dirs.size(), 3);
+    }
+
+    void detectSteam_realMachine_shapeInvariants() {
+        // Runs against whatever is installed; only invariants that always hold.
+        FileHelper  helper;
+        QVariantMap got = helper.detectSteam();
+        QVERIFY(got.contains("library"));
+        QVERIFY(got.contains("projectDirs"));
+        QVERIFY(got.contains("assets"));
+        QVERIFY(got.contains("globalConfig"));
+
+        // Content without a library root would break the QML wiring. The
+        // reverse of the second one does not hold: assets/ ships with the app
+        // but config.json is only written once it has been run.
+        if (! got["projectDirs"].toStringList().isEmpty())
+            QVERIFY(! got["library"].toString().isEmpty());
+        if (! got["globalConfig"].toString().isEmpty())
+            QVERIFY(! got["assets"].toString().isEmpty());
+
+        checkPathShape(got["library"].toString());
+        checkPathShape(got["assets"].toString());
+        checkPathShape(got["globalConfig"].toString());
+        for (const QString& dir : got["projectDirs"].toStringList()) checkPathShape(dir);
     }
 };
 

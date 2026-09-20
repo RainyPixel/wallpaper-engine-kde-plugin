@@ -292,10 +292,6 @@ QtObject {
         return checklib('Qt.labs.folderlistmodel 2.11', parentItem)
     }
 
-    function checklib_websockets(parentItem) {
-        return checklib('QtWebSockets', parentItem)
-    }
-
     function checklib_webchannel(parentItem) {
         return checklib('QtWebChannel 1.10', parentItem)
     }

@@ -10,7 +10,19 @@ Rectangle {
     anchors.fill: parent
     color: wallpaper.configuration.BackgroundColor
     
-    property string steamlibrary: Qt.resolvedUrl(wallpaper.configuration.SteamLibraryPath).toString()
+    // Steam libraries found on this machine, see FileHelper::detectSteam
+    property var steamDetect: pyext.detect_steam(wallpaper.configuration.SteamLibraryPath)
+    property string steamlibrary: {
+        // Qt.resolvedUrl('') gives this file's own url, so fall back on the
+        // native path and resolve only once there is one.
+        const path = wallpaper.configuration.SteamLibraryPath || steamDetect.library;
+        return path ? Qt.resolvedUrl(path).toString() : '';
+    }
+    // SceneBackend reads assets as a QUrl and QUrl::toLocalFile() is empty for
+    // a scheme-less one, so the detected native path has to be resolved too.
+    property string steamAssets: steamDetect.assets
+        ? Qt.resolvedUrl(steamDetect.assets).toString()
+        : Common.getAssetsPath(steamlibrary)
     // Global Mode: shared config (wallpaper choice + randomization) lives in
     // ~/.config/wekde/global.json instead of per-screen KConfig. globalRev is
     // bumped on every global change to re-evaluate the resolver bindings below.
@@ -250,8 +262,13 @@ Rectangle {
     WallpaperListModel {
         id: wpListModel
         enabled: background.randomizeWallpaper
-        workshopDirs: Common.getProjectDirs(background.steamlibrary)
-        globalConfigPath: Common.getGlobalConfigPath(background.steamlibrary)
+        // Detection already resolved and deduplicated every library; the
+        // string-built dirs are the fallback for a tree it does not know.
+        workshopDirs: background.steamDetect.projectDirs.length
+            ? background.steamDetect.projectDirs
+            : Common.getProjectDirs(background.steamlibrary)
+        globalConfigPath: background.steamDetect.globalConfig
+            || Common.getGlobalConfigPath(background.steamlibrary)
         filterStr: background.filterStr
         initItemOp: (item) => {
             if(!background.customConf) return;
@@ -413,7 +430,7 @@ Rectangle {
             case 'scene':
                 if(background.hasLib) {
                     qmlsource = "backend/Scene.qml";
-                    properties = {"assets": Common.getAssetsPath(steamlibrary)};
+                    properties = {"assets": background.steamAssets};
                 } else {
                     backendLoader.loadInfoShow("Plugin lib not found. To support scene, please compile and install it.");
                     return; 

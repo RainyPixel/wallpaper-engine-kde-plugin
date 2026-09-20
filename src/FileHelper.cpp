@@ -1,4 +1,5 @@
 #include "FileHelper.hpp"
+#include "SteamPaths.hpp"
 #include <QFile>
 #include <QDir>
 #include <QDirIterator>
@@ -7,9 +8,56 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <QHash>
+#include <QSet>
 
 namespace wekde
 {
+
+namespace
+{
+
+QVariantMap packLibraries(const QList<steam::Library>& libraries,
+                          const QString&               configuredLibrary) {
+    const QString configured = steam::canonicalPath(configuredLibrary);
+
+    // A library the user picked by hand answers for assets/ and config.json
+    // whenever it actually carries the app, so pointing the folder button at a
+    // second Steam install is not silently overruled by detection order.
+    const steam::Library* chosen    = nullptr;
+    const steam::Library* installed = nullptr;
+    for (const steam::Library& lib : libraries) {
+        if (! configured.isEmpty() && lib.root == configured) chosen = &lib;
+        if (installed == nullptr && ! lib.installDir.isEmpty()) installed = &lib;
+    }
+    const steam::Library* source =
+        (chosen != nullptr && ! chosen->installDir.isEmpty()) ? chosen : installed;
+
+    // Every root here is canonical, so plain string comparison deduplicates
+    // correctly even when the same library is reached through a symlink.
+    QStringList   projectDirs;
+    QSet<QString> seen;
+    const auto    add = [&](const QString& dir) {
+        if (dir.isEmpty() || seen.contains(dir)) return;
+        seen.insert(dir);
+        projectDirs.append(dir);
+    };
+    for (const steam::Library& lib : libraries) add(lib.workshopDir);
+    if (source != nullptr) {
+        add(steam::defaultProjectsDir(source->installDir));
+        add(steam::myProjectsDir(source->installDir));
+    }
+
+    QVariantMap result;
+    result["library"]     = libraries.isEmpty() ? QString() : libraries.first().root;
+    result["projectDirs"] = projectDirs;
+    result["assets"]      = source != nullptr ? steam::assetsDir(source->installDir) : QString();
+    result["globalConfig"] =
+        source != nullptr ? steam::globalConfigPath(source->installDir) : QString();
+    return result;
+}
+
+} // namespace
 
 FileHelper::FileHelper(QObject* parent): QObject(parent) {
     // Ensure config directory exists
@@ -123,6 +171,30 @@ QVariantMap FileHelper::getFolderList(const QString& path, const QVariantMap& op
 
     result["items"] = items;
     return result;
+}
+
+QVariantMap FileHelper::detectSteam(const QString& configuredLibrary) {
+    // plasmashell builds one wallpaper item per screen and each one asks for
+    // this, but the walk gives the same answer every time, so it runs once per
+    // configured library per process instead of once per screen.
+    static QHash<QString, QVariantMap> cache;
+    const auto                         cached = cache.constFind(configuredLibrary);
+    if (cached != cache.constEnd()) return *cached;
+
+    // A library the user picked by hand is not necessarily reachable from any
+    // of the standard Steam roots, so it is probed as a root of its own.
+    QStringList roots;
+    if (! configuredLibrary.isEmpty()) roots.append(configuredLibrary);
+    roots.append(steam::steamRoots());
+
+    const QVariantMap result = detectSteamIn(roots, configuredLibrary);
+    cache.insert(configuredLibrary, result);
+    return result;
+}
+
+QVariantMap FileHelper::detectSteamIn(const QStringList& steamRoots,
+                                      const QString&     configuredLibrary) {
+    return packLibraries(steam::detectLibrariesIn(steamRoots), configuredLibrary);
 }
 
 QVariantMap FileHelper::readWallpaperConfig(const QString& id) {

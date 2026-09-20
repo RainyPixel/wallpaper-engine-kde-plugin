@@ -34,7 +34,6 @@ jobs:
             extra-cmake-modules \
             libplasma \
             qt6-declarative \
-            qt6-websockets \
             qt6-webchannel \
             vulkan-headers \
             mpv \
@@ -91,7 +90,6 @@ jobs:
             qt6-qtbase-private-devel \
             libplasma-devel \
             qt6-qtwebchannel-devel \
-            qt6-qtwebsockets-devel \
             qt6-qtdeclarative-devel
 
       - name: Configure

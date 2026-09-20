@@ -10,6 +10,13 @@ A wallpaper plugin integrating [Wallpaper Engine](https://store.steampowered.com
 - **Fixed KDE 6.5+ theme reactivity** — UI elements no longer become invisible when switching between light/dark themes
 - **Plasma 6 / Qt6 support**
 
+## Hyprland and Omarchy
+
+The [`hyprland/`](hyprland/README.md) directory contains a separate host that shows web wallpapers
+as a Wayland background on Hyprland without Plasma. It has its own build
+(`cmake -B build/hyprland -S hyprland`) and currently supports web wallpapers only; scene and
+video wallpapers remain KDE-only for now. The KDE plugin build below is unaffected.
+
 ## Install
 
 ### Arch Linux (AUR)
@@ -126,10 +133,11 @@ After installing via any method:
 
 1. Right-click the desktop → **Configure Desktop and Wallpaper...**
 2. Open the **Wallpaper Type** dropdown and select **Wallpaper Engine for KDE**
-3. Under **Steam Library**, point to the folder containing your `steamapps` directory
-   - Usually `~/.local/share/Steam`
-   - *Wallpaper Engine* must be installed in this library
-4. Your subscribed Workshop wallpapers will appear in the list — select one and click **Apply**
+3. Your subscribed Workshop wallpapers appear in the list — select one and click **Apply**
+
+The Steam library is detected automatically, including Flatpak and Snap installs and libraries on
+other drives. Wallpapers from every library are listed together. Use the folder button on the
+Wallpapers tab to override the detected library, for example to pick a second Steam installation.
 
 > **Note:** After an rpm-ostree/Bazzite install you may need to reboot before the plugin starts working. For cmake installs, restarting plasmashell is enough: `systemctl --user restart plasma-plasmashell.service`
 
@@ -145,10 +153,9 @@ as soon as either one is updated.
 ## Usage
 1. *Wallpaper Engine* installed on Steam
 2. Subscribe to some wallpapers on the Workshop
-3. Select the *steamlibrary* folder on the Wallpapers tab of this plugin
-   - The *steamlibrary* which contains the *steamapps* folder
-   - This is usually `~/.local/share/Steam` by default
-   - *Wallpaper Engine* needs to be installed in this *steamlibrary*
+3. Open the Wallpapers tab — the Steam library is found automatically
+   - If nothing shows up, pick the *steamlibrary* folder with the folder button
+   - The *steamlibrary* is the one containing the *steamapps* folder
 
 ## Requirements
 - KDE Plasma 6

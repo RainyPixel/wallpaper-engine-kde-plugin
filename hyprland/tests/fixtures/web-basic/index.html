@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Orbit Grid Test Fixture</title>
+<style>
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14; }
+canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<script>
+"use strict";
+
+const state = {
+    frames: 0,
+    elapsed: 0,
+    ticks: 0,
+    fps: 30,
+    paused: false,
+    pauseCalls: 0,
+    freezeEvents: 0,
+    resumeEvents: 0,
+    propertyCalls: 0,
+    settings: { speed: 1, showgrid: true, accent: [0.2, 0.7, 0.9], shape: "circle", label: "fixture" }
+};
+
+function parseColor(text) {
+    const parts = String(text).trim().split(/\s+/).map(Number);
+    return parts.length >= 3 && parts.every(Number.isFinite) ? parts.slice(0, 3) : null;
+}
+
+// The "trigger" property lets the integration test make the page reload or navigate.
+// Only a changed value acts; the first value a document receives is the baseline.
+let lastTrigger = null;
+
+function handleTrigger(value) {
+    const text = String(value);
+    const previous = lastTrigger;
+    lastTrigger = text;
+    if (previous === null || previous === text) return;
+    const action = text.split(":")[0];
+    if (action === "reload")
+        location.reload();
+    else if (action === "navigate-outside")
+        location.href = new URL("../outside-the-project.html", location.href).href;
+    else if (action === "navigate-missing")
+        location.href = "missing-page.html";
+}
+
+window.wallpaperPropertyListener = {
+    applyUserProperties(properties) {
+        state.propertyCalls++;
+        for (const [name, property] of Object.entries(properties)) {
+            if (!property || !("value" in property)) continue;
+            if (name === "trigger") {
+                handleTrigger(property.value);
+            } else if (name === "accent") {
+                const color = parseColor(property.value);
+                if (color) state.settings.accent = color;
+            } else if (name in state.settings) {
+                state.settings[name] = property.value;
+            }
+        }
+    },
+    applyGeneralProperties(properties) {
+        if (Number.isFinite(properties.fps) && properties.fps > 0) state.fps = properties.fps;
+    },
+    setPaused(paused) {
+        state.paused = Boolean(paused);
+        if (state.paused) state.pauseCalls++;
+    }
+};
+
+// Read by the host with --diagnostics; used by the integration test.
+window.wallpaperDiagnostics = () => ({
+    documentId: performance.timeOrigin,
+    href: location.href,
+    frames: state.frames,
+    elapsed: Number(state.elapsed.toFixed(3)),
+    ticks: state.ticks,
+    fps: state.fps,
+    paused: state.paused,
+    pauseCalls: state.pauseCalls,
+    freezeEvents: state.freezeEvents,
+    resumeEvents: state.resumeEvents,
+    propertyCalls: state.propertyCalls,
+    settings: {
+        speed: state.settings.speed,
+        showgrid: state.settings.showgrid,
+        accent: state.settings.accent.join(" "),
+        shape: state.settings.shape,
+        label: state.settings.label
+    }
+});
+
+document.addEventListener("freeze", () => { state.freezeEvents++; });
+document.addEventListener("resume", () => { state.resumeEvents++; });
+setInterval(() => { state.ticks++; }, 100);
+
+const canvas = document.getElementById("view");
+const context = canvas.getContext("2d");
+
+function resize() {
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(window.innerWidth * ratio);
+    canvas.height = Math.round(window.innerHeight * ratio);
+}
+window.addEventListener("resize", resize);
+resize();
+
+function draw() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const cell = Math.max(24, Math.round(Math.min(width, height) / 12));
+    const [r, g, b] = state.settings.accent.map(v => Math.round(Math.min(1, Math.max(0, v)) * 255));
+
+    context.fillStyle = "#0b0f14";
+    context.fillRect(0, 0, width, height);
+
+    if (state.settings.showgrid) {
+        context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+        context.lineWidth = 1;
+        context.beginPath();
+        for (let x = 0; x <= width; x += cell) {
+            context.moveTo(x + 0.5, 0);
+            context.lineTo(x + 0.5, height);
+        }
+        for (let y = 0; y <= height; y += cell) {
+            context.moveTo(0, y + 0.5);
+            context.lineTo(width, y + 0.5);
+        }
+        context.stroke();
+    }
+
+    const t = state.elapsed;
+    const count = 7;
+    context.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    for (let i = 0; i < count; i++) {
+        const phase = t * 0.6 + i * (Math.PI * 2 / count);
+        const x = width / 2 + Math.cos(phase) * width * 0.3;
+        const y = height / 2 + Math.sin(phase * 1.3) * height * 0.3;
+        const size = cell * (0.25 + 0.15 * Math.sin(t + i));
+        context.beginPath();
+        if (state.settings.shape === "square")
+            context.rect(x - size, y - size, size * 2, size * 2);
+        else
+            context.arc(x, y, size, 0, Math.PI * 2);
+        context.fill();
+    }
+
+    context.fillStyle = "rgba(255, 255, 255, 0.35)";
+    context.font = `${Math.round(cell * 0.4)}px sans-serif`;
+    context.fillText(String(state.settings.label), cell * 0.5, height - cell * 0.5);
+}
+
+let last = performance.now();
+let lastDraw = 0;
+
+function frame(now) {
+    const dt = Math.min(0.25, Math.max(0, now - last) / 1000);
+    last = now;
+    if (!state.paused) {
+        state.elapsed += dt * Number(state.settings.speed);
+        if (now - lastDraw >= 1000 / state.fps - 2) {
+            lastDraw = now;
+            state.frames++;
+            draw();
+        }
+    }
+    window.requestAnimationFrame(frame);
+}
+window.requestAnimationFrame(frame);
+</script>
+</body>
+</html>

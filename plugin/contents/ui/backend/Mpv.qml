@@ -59,6 +59,7 @@ Item{
         mute: background.mute
         volume: 0
         hwdec: background.mpvHwdec
+        maxFps: background.fps
         Connections {
             ignoreUnknownSignals: true
             onFirstFrame: {

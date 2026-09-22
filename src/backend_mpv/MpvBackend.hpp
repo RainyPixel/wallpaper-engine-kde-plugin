@@ -31,6 +31,7 @@ class MpvObject : public QQuickRhiItem {
     Q_PROPERTY(QString logfile READ logfile WRITE setLogfile)
     Q_PROPERTY(int volume READ volume WRITE setVolume)
     Q_PROPERTY(QString hwdec READ hwdec WRITE setHwdec)
+    Q_PROPERTY(int maxFps READ maxFps WRITE setMaxFps NOTIFY maxFpsChanged)
 
     friend class MpvRender;
 
@@ -58,6 +59,8 @@ public:
     void    setVolume(const int& volume);
     QString hwdec() const;
     void    setHwdec(const QString& hwdec);
+    int     maxFps() const;
+    void    setMaxFps(int fps);
 
 public slots:
     void play();
@@ -75,12 +78,16 @@ signals:
     void statusChanged();
     void sourceChanged();
     void firstFrame();
+    void maxFpsChanged();
 
 private:
+    void applyFpsLimit();
+
     bool    inited = false;
     QUrl    m_source;
     Status  m_status = Stopped;
     QString m_hwdec { "auto" };
+    int     m_maxFps { 0 };
 
 private:
     mpv_handle*                m_mpv { nullptr };

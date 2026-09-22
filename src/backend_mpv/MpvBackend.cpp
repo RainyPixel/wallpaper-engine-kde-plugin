@@ -111,6 +111,28 @@ void MpvObject::setHwdec(const QString& hwdec) {
     mpv_set_property_string(m_mpv, "hwdec", hwdec.toUtf8().constData());
 }
 
+int MpvObject::maxFps() const { return m_maxFps; }
+
+void MpvObject::setMaxFps(int fps) {
+    if (m_maxFps == fps) return;
+    m_maxFps = fps;
+    applyFpsLimit();
+    Q_EMIT maxFpsChanged();
+}
+
+void MpvObject::applyFpsLimit() {
+    if (! m_mpv) return;
+
+    if (m_maxFps >= 5 && m_maxFps <= 120) {
+        setProperty("video-sync", "fps");
+        setProperty("fps", m_maxFps);
+        _Q_DEBUG() << "Mpv fps limit enabled:" << m_maxFps;
+    } else {
+        setProperty("video-sync", "display-vdrop");
+        _Q_DEBUG() << "Mpv fps limit disabled (native rate)";
+    }
+}
+
 void MpvObject::setLogfile(const QString& logfile) { setProperty("log-file", logfile); }
 
 void MpvObject::setSource(const QUrl& source) {
@@ -308,6 +330,8 @@ MpvObject::MpvObject(QQuickItem* parent)
         m_mpv = nullptr;
         return;
     }
+
+    applyFpsLimit();
 }
 
 MpvObject::~MpvObject() {}

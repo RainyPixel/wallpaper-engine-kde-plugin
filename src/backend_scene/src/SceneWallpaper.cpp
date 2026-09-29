@@ -367,7 +367,8 @@ private:
     uint16_t    m_width { 0 };
     uint16_t    m_height { 0 };
 
-    std::atomic<std::array<float, 2>> m_mouse_pos { std::array { 0.5f, 0.5f } };
+    std::atomic<std::array<float, 2>> m_mouse_pos { std::array { (float)SCENE_POINTER_CENTER,
+                                                                 (float)SCENE_POINTER_CENTER } };
 };
 
 void MainHandler::stopRender() {

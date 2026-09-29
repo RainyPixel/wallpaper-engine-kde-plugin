@@ -7,51 +7,56 @@
 #include "Core/MapSet.hpp"
 
 #include "VulkanRender/AllPasses.hpp"
+#include "VulkanRender/PassCache.hpp"
 
 using namespace wallpaper;
 namespace wallpaper::rg
 {
 
-void doCopy(RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc, TexNode* in, TexNode* out) {
+void doCopy(RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc, TexNode* in, TexNode* out,
+            Scene& scene) {
     builder.read(in);
     builder.write(out);
 
     desc.src = in->key();
     desc.dst = out->key();
+    vulkan::CountRealTargetWrite(scene.rt_write_count, desc.dst);
 }
-void addCopyPass(RenderGraph& rgraph, TexNode* in, TexNode* out) {
+void addCopyPass(RenderGraph& rgraph, Scene& scene, TexNode* in, TexNode* out) {
     rgraph.addPass<vulkan::CopyPass>(
         "copy",
         PassNode::Type::Copy,
-        [&in, &out](RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc) {
-            doCopy(builder, desc, in, out);
+        [&in, &out, &scene](RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc) {
+            doCopy(builder, desc, in, out, scene);
         });
 }
 
-void addCopyPass(RenderGraph& rgraph, const TexNode::Desc& in, const TexNode::Desc& out) {
+void addCopyPass(RenderGraph& rgraph, Scene& scene, const TexNode::Desc& in,
+                 const TexNode::Desc& out) {
     rgraph.addPass<vulkan::CopyPass>(
         "copy",
         PassNode::Type::Copy,
-        [&in, &out](RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc) {
+        [&in, &out, &scene](RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc) {
             auto* in_node  = builder.createTexNode(in);
             auto* out_node = builder.createTexNode(out, true);
-            doCopy(builder, desc, in_node, out_node);
+            doCopy(builder, desc, in_node, out_node, scene);
         });
 }
 
-TexNode* addCopyPass(RenderGraph& rgraph, TexNode* in, TexNode::Desc* out_desc = nullptr) {
+TexNode* addCopyPass(RenderGraph& rgraph, Scene& scene, TexNode* in,
+                     TexNode::Desc* out_desc = nullptr) {
     TexNode* copy { nullptr };
     rgraph.addPass<vulkan::CopyPass>(
         "copy",
         PassNode::Type::Copy,
-        [&copy, in, out_desc](RenderGraphBuilder& builder, vulkan::CopyPass::Desc& pdesc) {
+        [&copy, in, out_desc, &scene](RenderGraphBuilder& builder, vulkan::CopyPass::Desc& pdesc) {
             auto desc = out_desc == nullptr ? in->genDesc() : *out_desc;
             if (out_desc == nullptr) {
                 desc.key += "_" + std::to_string(in->version()) + "_copy";
                 desc.name += "_" + std::to_string(in->version()) + "_copy";
             }
             copy = builder.createTexNode(desc, true);
-            doCopy(builder, pdesc, in, copy);
+            doCopy(builder, pdesc, in, copy, scene);
         });
     return copy;
 }
@@ -112,8 +117,10 @@ static void ToGraphPass(SceneNode* node, std::string_view output, i32 imgId, Ext
                 if (cmdItor != cmdEnd && nodePos == cmdItor->afterpos) {
                     // both copy and swap use copy pass;
                     // true swap would need temp FBO support in render graph
-                    rg::addCopyPass(
-                        rgraph, rg::createTexDesc(cmdItor->src), rg::createTexDesc(cmdItor->dst));
+                    rg::addCopyPass(rgraph,
+                                    scene,
+                                    rg::createTexDesc(cmdItor->src),
+                                    rg::createTexDesc(cmdItor->dst));
                     cmdItor++;
                 }
                 auto& name = n.output;
@@ -156,6 +163,7 @@ static void ToGraphPass(SceneNode* node, std::string_view output, i32 imgId, Ext
             const auto& pass = builder.workPassNode();
             pdesc.node       = node;
             pdesc.output     = output;
+            vulkan::CountRealTargetWrite(scene.rt_write_count, pdesc.output);
             CheckAndSetSprite(scene, pdesc, material->textures);
             for (usize i = 0; i < material->textures.size(); i++) {
                 const auto&  url = material->textures[i];
@@ -183,7 +191,7 @@ static void ToGraphPass(SceneNode* node, std::string_view output, i32 imgId, Ext
 
                 if (url == output) {
                     builder.markSelfWrite(input);
-                    input = rg::addCopyPass(rgraph, input);
+                    input = rg::addCopyPass(rgraph, scene, input);
                 }
                 builder.read(input);
                 pdesc.textures.emplace_back(input->key());
@@ -206,6 +214,7 @@ static void ToGraphPass(SceneNode* node, std::string_view output, i32 imgId, Ext
 }
 
 std::unique_ptr<rg::RenderGraph> wallpaper::sceneToRenderGraph(Scene& scene) {
+    scene.rt_write_count.clear();
     std::unique_ptr<rg::RenderGraph> rgraph = std::make_unique<rg::RenderGraph>();
     ExtraInfo                        extra { .rgraph = rgraph.get(), .scene = &scene };
     TraverseNode(
@@ -228,7 +237,7 @@ std::unique_ptr<rg::RenderGraph> wallpaper::sceneToRenderGraph(Scene& scene) {
                 copy_desc.key       = GenLinkTex((idx)info.link_id);
                 copy_desc.name      = copy_desc.key;
 
-                auto new_in = rg::addCopyPass(*rgraph, link_tex_node, &copy_desc);
+                auto new_in = rg::addCopyPass(*rgraph, *extra.scene, link_tex_node, &copy_desc);
                 builder.read(new_in);
                 pass.setDescTex((u32)info.tex_index, new_in->key());
                 return true;
@@ -237,6 +246,7 @@ std::unique_ptr<rg::RenderGraph> wallpaper::sceneToRenderGraph(Scene& scene) {
 
     if (extra.use_mipmap_framebuffer) {
         rg::addCopyPass(*rgraph,
+                        scene,
                         rg::TexNode::Desc { .name = SpecTex_Default.data(),
                                             .key  = SpecTex_Default.data(),
                                             .type = rg::TexNode::TexType::Temp },

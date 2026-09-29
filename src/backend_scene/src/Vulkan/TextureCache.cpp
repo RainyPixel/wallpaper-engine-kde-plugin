@@ -3,6 +3,7 @@
 #include "Swapchain.hpp"
 #include "TextureCache.hpp"
 #include "Device.hpp"
+#include "VulkanRender/PassCache.hpp"
 #include "Util.hpp"
 
 #include "Image.hpp"
@@ -592,7 +593,7 @@ std::optional<ImageParameters> TextureCache::Query(std::string_view key, Texture
         auto& query = *(m_query_map.find(key)->second);
 
         query.share_ready = false;
-        query.persist     = persist;
+        query.persist     = LatchQueryPersist(query.persist, persist);
 
         return query.image;
     };

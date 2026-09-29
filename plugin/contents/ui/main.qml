@@ -155,10 +155,19 @@ Rectangle {
             wallpaper.accentColorChanged();
     }
 
+    // QtObject.destroy() deletes at the end of the event loop. Clear the target
+    // before destroy(), then drop the property, or the grabber keeps forwarding.
+    // Turning mouse input off also recenters. Teardown uses this drop and does not.
+    function dropMouseHook() {
+        if(!mouseHooker)
+            return;
+        mouseHooker.target = null;
+        mouseHooker.destroy();
+        mouseHooker = null;
+    }
+
     Component.onDestruction: {
-        if(mouseHooker) {
-            mouseHooker.destroy();
-        }
+        dropMouseHook();
     }
 
     function applySource() {
@@ -186,11 +195,12 @@ Rectangle {
     onMouseInputChanged: {
         if(this.mouseInput) {
             hookTimer.start();
-        }
-        else if(this.mouseHooker) {
-            this.mouseHooker.target = null;
-            this.mouseHooker.destroy;
-            this.mouseHooker = null;
+        } else {
+            dropMouseHook();
+            // The scene keeps the last pointer. Centre it so camera parallax
+            // eases back instead of staying at the offset where input was cut.
+            if(backendLoader.item && backendLoader.item.resetPointer)
+                backendLoader.item.resetPointer();
         }
     }
 
@@ -227,7 +237,7 @@ Rectangle {
             if(screenGrid === null)
                 return false;
             console.error(screenGrid);
-            if(background.mouseHooker) background.mouseHooker.destroy();
+            dropMouseHook();
             background.mouseHooker = Qt.createQmlObject(`import QtQuick 2.12;
                     import com.github.catsout.wallpaperEngineKde 1.2
                     MouseGrabber {

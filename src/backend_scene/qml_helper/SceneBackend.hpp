@@ -71,6 +71,9 @@ public:
 
     Q_INVOKABLE void setAcceptMouse(bool);
     Q_INVOKABLE void setAcceptHover(bool);
+    // Send the neutral pointer (screen centre) so parallax eases back when the
+    // desktop mouse hook is detached.
+    Q_INVOKABLE void centerPointer();
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;

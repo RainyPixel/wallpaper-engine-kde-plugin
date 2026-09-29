@@ -78,4 +78,8 @@ Item{
     function getMouseTarget() {
         return Qt.binding(function() { return player; })
     }
+
+    function resetPointer() {
+        player.centerPointer()
+    }
 }

@@ -27,6 +27,7 @@
 #include "wpscene/WPScene.h"
 
 #include "Fs/VFS.h"
+#include "OrthoCamera.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -477,14 +478,15 @@ void ParseCamera(ParseContext& context, wpscene::WPSceneGeneral& general) {
     scene.cameras.at("effect")->AttatchNode(context.effect_camera_node);
     scene.sceneGraph->AppendChild(context.effect_camera_node);
 
-    // global camera
-    scene.cameras["global"] = std::make_shared<SceneCamera>((context.ortho_w / (i32)general.zoom),
-                                                            (context.ortho_h / (i32)general.zoom),
-                                                            -5000.0f,
-                                                            5000.0f);
-    scene.activeCamera      = scene.cameras.at("global").get();
-    Vector3f cori { (float)context.ortho_w / 2.0f, (float)context.ortho_h / 2.0f, 0 },
-        cscale { 1.0f, 1.0f, 1.0f }, cangle(Vector3f::Zero());
+    // global camera. Zoom crops the ortho camera; perspective keeps the unscaled
+    // ortho aspect and height (see CameraExtentsForFill for the fill-mode path).
+    scene.camera_zoom = general.zoom;
+    const auto cam    = OrthoCameraForZoom(context.ortho_w, context.ortho_h, general.zoom);
+    scene.cameras["global"] =
+        std::make_shared<SceneCamera>(cam.width, cam.height, -5000.0f, 5000.0f);
+    scene.activeCamera = scene.cameras.at("global").get();
+    Vector3f cori { cam.center_x, cam.center_y, 0 }, cscale { 1.0f, 1.0f, 1.0f },
+        cangle(Vector3f::Zero());
 
     context.global_camera_node = std::make_shared<SceneNode>(cori, cscale, cangle);
     scene.activeCamera->AttatchNode(context.global_camera_node);

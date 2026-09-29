@@ -354,6 +354,11 @@ void SceneObject::setAcceptMouse(bool value) {
 
 void SceneObject::setAcceptHover(bool value) { setAcceptHoverEvents(value); }
 
+void SceneObject::centerPointer() {
+    if (m_scene)
+        m_scene->mouseInput(wallpaper::SCENE_POINTER_CENTER, wallpaper::SCENE_POINTER_CENTER);
+}
+
 void SceneObject::mousePressEvent(QMouseEvent* event) {}
 void SceneObject::mouseMoveEvent(QMouseEvent* event) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))

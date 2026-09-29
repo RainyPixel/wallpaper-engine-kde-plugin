@@ -9,6 +9,8 @@ add_executable(backend_scene_tests
     test_WPTexImageParser.cpp
     test_SpecTexs.cpp
     test_SpriteAnimation.cpp
+    test_PassCache.cpp
+    test_OrthoCamera.cpp
     test_helpers.cpp
     # Compile specific source files to avoid pulling in Vulkan
     ${SRC_DIR}/WPTexImageParser.cpp
@@ -17,6 +19,7 @@ add_executable(backend_scene_tests
 
 target_include_directories(backend_scene_tests PRIVATE
     ${SRC_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${SRC_DIR}/Scene/include
     ${DOCTEST_INCLUDE_DIR}
 )

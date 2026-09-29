@@ -6,6 +6,7 @@
 #include "Interface/IShaderValueUpdater.h"
 
 #include "Utils/Algorism.h"
+#include "OrthoCamera.hpp"
 
 #include <cstdlib>
 #include <glslang/Public/ShaderLang.h>
@@ -533,44 +534,16 @@ void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
     auto height = m_out_extent.height;
 
     if (width == 0) return;
-    double sw = scene.ortho[0], sh = scene.ortho[1];
-    double fboAspect = width / (double)height, sAspect = sw / sh;
-    auto&  gCam    = *scene.cameras.at("global");
-    auto&  gPerCam = *scene.cameras.at("global_perspective");
-    // assum cam
-    switch (fillmode) {
-    case FillMode::STRETCH:
-        gCam.SetWidth(sw);
-        gCam.SetHeight(sh);
-        gPerCam.SetAspect(sAspect);
-        gPerCam.SetFov(algorism::CalculatePersperctiveFov(1000.0f, gCam.Height()));
-        break;
-    case FillMode::ASPECTFIT:
-        if (fboAspect < sAspect) {
-            // scale height
-            gCam.SetWidth(sw);
-            gCam.SetHeight(sw / fboAspect);
-        } else {
-            gCam.SetWidth(sh * fboAspect);
-            gCam.SetHeight(sh);
-        }
-        gPerCam.SetAspect(fboAspect);
-        gPerCam.SetFov(algorism::CalculatePersperctiveFov(1000.0f, gCam.Height()));
-        break;
-    case FillMode::ASPECTCROP:
-    default:
-        if (fboAspect > sAspect) {
-            // scale height
-            gCam.SetWidth(sw);
-            gCam.SetHeight(sw / fboAspect);
-        } else {
-            gCam.SetWidth(sh * fboAspect);
-            gCam.SetHeight(sh);
-        }
-        gPerCam.SetAspect(fboAspect);
-        gPerCam.SetFov(algorism::CalculatePersperctiveFov(1000.0f, gCam.Height()));
-        break;
-    }
+    // Ortho size includes scene zoom. Perspective aspect and FOV stay on the
+    // pre-zoom fill height (perspective_height).
+    const auto ext = CameraExtentsForFill(
+        scene.ortho[0], scene.ortho[1], width, height, fillmode, scene.camera_zoom);
+    auto& gCam    = *scene.cameras.at("global");
+    auto& gPerCam = *scene.cameras.at("global_perspective");
+    gCam.SetWidth(ext.ortho_width);
+    gCam.SetHeight(ext.ortho_height);
+    gPerCam.SetAspect(ext.perspective_aspect);
+    gPerCam.SetFov(algorism::CalculatePersperctiveFov(1000.0f, ext.perspective_height));
     gCam.Update();
     gPerCam.Update();
     scene.UpdateLinkedCamera("global");

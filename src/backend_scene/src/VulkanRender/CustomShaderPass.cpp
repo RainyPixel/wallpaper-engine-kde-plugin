@@ -8,6 +8,7 @@
 #include "Utils/AutoDeletor.hpp"
 #include "Resource.hpp"
 #include "PassCommon.hpp"
+#include "PassCache.hpp"
 #include "Interface/IImageParser.h"
 
 #include "Core/ArrayHelper.hpp"
@@ -181,9 +182,12 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
     // Static-pass caching: a pass may be executed once and skipped afterwards
     // when its output never changes. That holds when the pass is static (no
     // dynamic geometry/sprites), independent of time/pointer uniforms, reads
-    // only frame-static inputs, and writes a dedicated reusable effect buffer
-    // (not the shared canvas, which PrePass clears every frame). prepare() runs
-    // in topological order, so input producers are recorded before consumers.
+    // only frame-static inputs, writes a dedicated reusable effect buffer
+    // (not the shared canvas, which PrePass clears every frame), and is the
+    // only writer of that buffer. prepare() runs in topological order, so
+    // input producers are recorded before consumers. A second writer of the
+    // same name (effect ping-pong copy, later composite) overwrites the one
+    // GPU image; skipping the producer then leaves the base layer black.
     {
         bool inputs_static = true;
         for (auto& in_name : m_desc.textures) {
@@ -196,9 +200,14 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
                 }
             }
         }
-        auto& out_rt   = scene.renderTargets.at(m_desc.output);
-        m_frame_static = scene.cache_passes && isStatic() && ! m_uses_time_uniforms &&
-                         inputs_static && out_rt.allowReuse;
+        auto&     out_rt  = scene.renderTargets.at(m_desc.output);
+        const int writers = RealTargetWriteCount(scene.rt_write_count, m_desc.output);
+        m_frame_static    = PassOutputFrameStatic(scene.cache_passes,
+                                               isStatic(),
+                                               m_uses_time_uniforms,
+                                               inputs_static,
+                                               out_rt.allowReuse,
+                                               writers);
         scene.rt_frame_static[m_desc.output] = m_frame_static;
     }
 

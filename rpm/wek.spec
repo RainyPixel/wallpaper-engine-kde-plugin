@@ -39,7 +39,7 @@ Requires: qt6qml(Qt5Compat.GraphicalEffects)
 
 %description
 A wallpaper plugin integrating Wallpaper Engine into KDE Plasma 6 wallpaper
-settings. This is the RainyPixel fork with native C++ file operations
+settings. File operations are native C++
 (no Python dependency), fixed KDE 6.5+ theme reactivity, and Plasma 6 / Qt6
 support.
 
@@ -70,5 +70,5 @@ DESTDIR=%{buildroot} cmake --install %{_builddir}/wek-build \
 
 * Sat Feb 28 2026 packager - 0-1
 - Add kf6-kcoreaddons-devel and kf6-kpackage-devel to BuildRequires
-- Port to RainyPixel fork: drop python3-websockets and Qt5 dep,
+- Drop python3-websockets and the Qt5 dependency,
   update URL, modernise cmake, remove tarball/setup dependency

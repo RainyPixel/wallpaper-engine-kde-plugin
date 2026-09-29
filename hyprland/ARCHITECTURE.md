@@ -15,15 +15,15 @@ pattern as the existing standalone builds in `tests/` and `src/backend_scene/sta
   libplasma. None of that exists on Hyprland, so the Plasma QML cannot be hosted directly.
 - The renderers are the reusable part. `src/backend_mpv` is a plain `QQuickRhiItem` and
   `src/backend_scene/qml_helper` is a plain `QQuickItem`; neither depends on Plasma. A native
-  Qt Quick host can load them later without forking them.
+  Qt Quick host can load them later without a second copy of the renderer code.
 - Web wallpapers only need Qt WebEngine, which is a system library. The Wallpaper Engine web
   API surface used by the KDE backend (`applyUserProperties`, `applyGeneralProperties`,
   `setPaused`) is small enough to implement in the host without touching the KDE QML.
-- Keeping one repository keeps upstream history, licenses and renderer fixes mergeable. The
-  Hyprland host adds files under `hyprland/` and a short README section, so upstream merges
-  touch different files.
+- One repository keeps the history, the license and the renderer fixes together. The
+  Hyprland host adds files under `hyprland/` and a short README section, so host changes
+  and KDE plugin changes touch different files.
 
-A standalone product would only be justified if the renderers had to diverge from upstream.
+A separate product would only be justified if the renderers had to diverge from the KDE plugin.
 They do not at this stage.
 
 ## Host shape

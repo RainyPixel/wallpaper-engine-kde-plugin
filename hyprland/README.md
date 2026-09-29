@@ -4,9 +4,8 @@
 web wallpapers as a native Wayland background on Hyprland, including Omarchy. It does not need
 KDE Plasma.
 
-This directory is an addition to
-[RainyPixel/wallpaper-engine-kde-plugin](https://github.com/RainyPixel/wallpaper-engine-kde-plugin),
-which is based on [catsout/wallpaper-engine-kde-plugin](https://github.com/catsout/wallpaper-engine-kde-plugin).
+This directory is part of
+[RainyPixel/wallpaper-engine-kde-plugin](https://github.com/RainyPixel/wallpaper-engine-kde-plugin).
 The KDE Plasma plugin in the repository root is unchanged and keeps its own build. Why the host
 lives next to the plugin instead of in a separate project is described in
 [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -257,7 +256,4 @@ outside a Wayland session.
 
 ## License and credits
 
-GPL-2.0, see [LICENSE](../LICENSE). Based on the work of the
-[catsout](https://github.com/catsout/wallpaper-engine-kde-plugin) and
-[RainyPixel](https://github.com/RainyPixel/wallpaper-engine-kde-plugin) projects and their
-contributors.
+GPL-2.0, see [LICENSE](../LICENSE).

@@ -2,13 +2,9 @@
 
 A wallpaper plugin integrating [Wallpaper Engine](https://store.steampowered.com/app/431960/Wallpaper_Engine) into KDE Plasma wallpaper settings.
 
-> **This is a maintained fork** of the original [catsout/wallpaper-engine-kde-plugin](https://github.com/catsout/wallpaper-engine-kde-plugin) with improvements for Plasma 6.
-
-## Changes in this fork
-
-- **Removed Python dependency** — file operations now use native C++ (no more `python-websockets` issues)
-- **Fixed KDE 6.5+ theme reactivity** — UI elements no longer become invisible when switching between light/dark themes
-- **Plasma 6 / Qt6 support**
+- **Native file operations** — C++, no Python
+- **KDE 6.5+ theme reactivity** — UI stays visible when switching between light and dark themes
+- **Plasma 6 / Qt 6**
 
 ## Hyprland and Omarchy
 
@@ -28,8 +24,8 @@ paru -S wallpaper-engine-kde-plugin-git
 
 ### Fedora / rpm-ostree / Bazzite (RPM)
 
-A prebuilt RPM from February 2026 is available from the
-[CaptSilver fork](https://github.com/CaptSilver/wallpaper-engine-kde-plugin/releases). It predates
+A prebuilt RPM from February 2026 is available from
+[CaptSilver's releases](https://github.com/CaptSilver/wallpaper-engine-kde-plugin/releases). It predates
 the current code, so for the current version build the RPM yourself as described under
 [Build RPM package](#build-rpm-package-fedora).
 
@@ -183,7 +179,5 @@ Basic web APIs supported. WebGL may not work properly.
 - **MPV** — requires plugin lib compilation
 
 ## Acknowledgments
-- RainyPixel fork: [RainyPixel/wallpaper-engine-kde-plugin](https://github.com/rainypixel/wallpaper-engine-kde-plugin)
-- Original project: [catsout/wallpaper-engine-kde-plugin](https://github.com/catsout/wallpaper-engine-kde-plugin)
 - [RePKG](https://github.com/notscuffed/repkg)
 - All open-source libraries used in this project

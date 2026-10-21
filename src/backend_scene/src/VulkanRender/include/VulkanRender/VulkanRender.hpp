@@ -57,6 +57,10 @@ public:
     // loop never emits into a half-destroyed node during teardown.
     void clearRedrawCallback();
 
+    // Debug: write the next presented frame (swapchain path only) as a binary
+    // PPM to `path`. Used by the standalone viewer for headless verification.
+    void requestScreenshot(std::string path);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> pImpl;

@@ -22,6 +22,8 @@ constexpr std::string_view PROPERTY_CACHE_PATH           = "cache_path";
 constexpr std::string_view PROPERTY_FIRST_FRAME_CALLBACK = "first_frame_callback";
 constexpr std::string_view PROPERTY_USER_PROPS           = "user_props";
 constexpr std::string_view PROPERTY_CACHE_PASSES         = "cache_passes";
+// debug: dump the next frame to this path (binary PPM)
+constexpr std::string_view PROPERTY_SCREENSHOT = "screenshot";
 
 // Normalized pointer at the middle of the wallpaper. The render loop stores this
 // until a mouse event arrives, and turning mouse input off writes it back so

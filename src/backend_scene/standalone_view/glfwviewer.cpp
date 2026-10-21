@@ -4,6 +4,10 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <thread>
 #include <atomic>
 #include "arg.hpp"
 #include "SceneWallpaper.hpp"
@@ -48,6 +52,8 @@ int main(int argc, char** argv) {
     setAndParseArg(program, argc, argv);
     auto [w_width, w_height] = program.get<Resolution>(OPT_RESOLUTION);
 
+    // WP_VIEWER_X11=1 forces XWayland so X11 automation (xdotool) can drive the window
+    if (getenv("WP_VIEWER_X11") != nullptr) glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(w_width, w_height, "WP", nullptr, nullptr);
@@ -100,8 +106,41 @@ int main(int argc, char** argv) {
     glfwSetMouseButtonCallback(window, mouse_button_callback);
     glfwSetCursorPosCallback(window, cursor_position_callback);
 
+    // pinned cursor: re-send every poll so it also wins over real pointer motion
+    double pin_x = -1, pin_y = -1;
+    {
+        auto  spec = program.get<std::string>(OPT_CURSOR);
+        char* end  = nullptr;
+        if (! spec.empty()) {
+            pin_x = std::strtod(spec.c_str(), &end);
+            if (end && *end == ',') pin_y = std::strtod(end + 1, nullptr);
+        }
+    }
+    const bool pinned = pin_x >= 0 && pin_y >= 0;
+    if (pinned) glfwSetCursorPosCallback(window, nullptr);
+
+    const std::string shot_path  = program.get<std::string>(OPT_SCREENSHOT);
+    const double      shot_delay = program.get<double>(OPT_SHOT_DELAY);
+    const auto        t0         = std::chrono::steady_clock::now();
+    bool              shot_sent  = false;
+
     while (! glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        if (pinned) psw->mouseInput(pin_x, pin_y);
+        if (! shot_path.empty()) {
+            const double elapsed =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            if (! shot_sent && elapsed >= shot_delay) {
+                psw->setPropertyString(wallpaper::PROPERTY_SCREENSHOT, shot_path);
+                shot_sent = true;
+            }
+            if (shot_sent && std::filesystem::exists(shot_path) &&
+                std::filesystem::file_size(shot_path) > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
+            if (elapsed > shot_delay + 20.0) glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
     }
     delete psw;
     // wgl.Clear();

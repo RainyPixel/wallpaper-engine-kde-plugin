@@ -10,6 +10,9 @@ constexpr std::string_view OPT_VALID_LAYER = "--valid-layer";
 constexpr std::string_view OPT_GRAPHVIZ    = "--graphviz";
 constexpr std::string_view OPT_FPS         = "--fps";
 constexpr std::string_view OPT_RESOLUTION  = "--resolution";
+constexpr std::string_view OPT_CURSOR      = "--cursor";
+constexpr std::string_view OPT_SCREENSHOT  = "--screenshot";
+constexpr std::string_view OPT_SHOT_DELAY  = "--shot-delay";
 constexpr std::string_view OPT_CACHE_PATH  = "--cache-path";
 
 struct Resolution {
@@ -67,6 +70,24 @@ void setAndParseArg(argparse::ArgumentParser& arg, int argc, char** argv) {
             }
             return Resolution { width, height };
         });
+
+    // fixed cursor position (normalised, top-left origin) for testing scripts
+    // and pointer effects without moving the real pointer
+    arg.add_argument("-M", OPT_CURSOR)
+        .help("Pin the cursor position, eg. 0.1,0.5 (normalised, top-left origin)")
+        .default_value(std::string(""))
+        .nargs(1);
+
+    // headless verification: dump one frame to a PPM file after a delay and exit
+    arg.add_argument("-S", OPT_SCREENSHOT)
+        .help("Write a frame to this .ppm file and exit")
+        .default_value(std::string(""))
+        .nargs(1);
+    arg.add_argument(OPT_SHOT_DELAY)
+        .help("Seconds to wait before taking the screenshot")
+        .default_value(3.0)
+        .scan<'g', double>()
+        .nargs(1);
 
     try {
         arg.parse_args(argc, argv);

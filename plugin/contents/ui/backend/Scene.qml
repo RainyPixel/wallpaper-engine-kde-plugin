@@ -9,6 +9,9 @@ Item{
     property string assets: "assets"
     property int displayMode: background.displayMode
     property string userPropsJson: background.userPropsJson
+    // Non-empty when the scene's bottom layer is an embedded MP4: mpv plays it
+    // below, and the renderer draws the remaining layers over it transparently.
+    readonly property string underlayUrl: player.videoUnderlayUrl(player.source)
     property var volumeFade: Common.createVolumeFade(
         sceneItem, 
         Qt.binding(function() { return background.mute ? 0 : background.volume; }),
@@ -22,6 +25,8 @@ Item{
             player.fillMode = SceneViewer.ASPECTFIT;
         else if(displayMode == Common.DisplayMode.Crop)
             player.fillMode = SceneViewer.ASPECTCROP;
+        if(underlay.item)
+            underlay.applyDisplayMode();
     }
 
     // Force fillMode update on background.displayMode change
@@ -36,6 +41,35 @@ Item{
         function onDisplayModeChanged() {
             displayModeFixTimer.restart();
         }
+    }
+
+    Loader {
+        id: underlay
+        anchors.fill: parent
+        active: sceneItem.underlayUrl !== ""
+        sourceComponent: Mpv {
+            mute: true
+            volume: 0
+            hwdec: background.mpvHwdec
+            maxFps: background.fps
+            // mpv only accepts files once its render context exists.
+            // loadfile directly: a QUrl source would re-encode the slice:// path.
+            onInitFinished: command(["loadfile", sceneItem.underlayUrl])
+        }
+        function applyDisplayMode() {
+            const crop = sceneItem.displayMode == Common.DisplayMode.Crop;
+            const scale = sceneItem.displayMode == Common.DisplayMode.Scale;
+            item.setProperty("keepaspect", !scale);
+            item.setProperty("panscan", crop ? 1.0 : 0.0);
+        }
+        onLoaded: {
+            applyDisplayMode();
+            item.setProperty("speed", background.speed);
+        }
+    }
+    onUnderlayUrlChanged: {
+        if(underlay.item && underlayUrl !== "")
+            underlay.item.command(["loadfile", underlayUrl]);
     }
 
     SceneViewer {
@@ -69,10 +103,12 @@ Item{
     function play() {
         volumeFade.start();
         player.play();
+        if(underlay.item) underlay.item.play();
     }
     function pause() {
         volumeFade.stop();
         player.pause();
+        if(underlay.item) underlay.item.pause();
     }
     
     function getMouseTarget() {

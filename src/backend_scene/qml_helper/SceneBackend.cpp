@@ -4,6 +4,11 @@
 #include <QtCore/QObject>
 #include <QtCore/QDir>
 #include <QtCore/QThread>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QOpenGLContext>
@@ -16,6 +21,8 @@
 #endif
 
 #include <clocale>
+#include <cstring>
+#include <map>
 #include <atomic>
 #include <array>
 #include <functional>
@@ -46,7 +53,10 @@ void* get_proc_address(const char* name) {
 
 QSGTexture* createTextureFromGl(uint32_t handle, QSize size, QQuickWindow* window) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-    return QNativeInterface::QSGOpenGLTexture::fromNative(handle, window, size);
+    // Frames carry alpha: opaque scenes write 1.0, a video-underlay scene is
+    // transparent where the mpv video beneath should show through.
+    return QNativeInterface::QSGOpenGLTexture::fromNative(
+        handle, window, size, QQuickWindow::TextureHasAlphaChannel);
 #elif (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
     return window->createTextureFromNativeObject(
         QQuickWindow::NativeObjectTexture, &handle, 0, size);
@@ -272,6 +282,126 @@ void SceneObject::setSource(const QUrl& source) {
     m_source = source;
     setScenePropertyQurl(wallpaper::PROPERTY_SOURCE, m_source);
     Q_EMIT sourceChanged();
+}
+
+namespace
+{
+// Minimal read-only view of a project: files come from "<stem>.pkg" when it
+// exists (the format WPPkgFs reads), else from the project directory.
+class ProjectFiles {
+public:
+    explicit ProjectFiles(const QString& scene_path) {
+        QFileInfo fi(scene_path);
+        m_dir = fi.absolutePath();
+        QFile pkg(m_dir + "/" + fi.completeBaseName() + ".pkg");
+        if (! pkg.open(QIODevice::ReadOnly)) return;
+        auto readU32 = [&pkg](quint32& v) {
+            return pkg.read(reinterpret_cast<char*>(&v), 4) == 4;
+        };
+        auto readStr = [&](QByteArray& out) {
+            quint32 n;
+            if (! readU32(n) || n > 4096) return false;
+            out = pkg.read(n);
+            return out.size() == (qsizetype)n;
+        };
+        QByteArray version;
+        quint32    count;
+        if (! readStr(version) || ! version.startsWith("PKGV") || ! readU32(count)) return;
+        for (quint32 i = 0; i < count; i++) {
+            QByteArray name;
+            quint32    off, size;
+            if (! readStr(name) || ! readU32(off) || ! readU32(size)) return;
+            m_entries[QString::fromUtf8(name)] = { off, size };
+        }
+        m_base    = pkg.pos();
+        m_pkgPath = pkg.fileName();
+    }
+
+    // absolute file path + byte range of an entry
+    bool locate(const QString& name, QString& file, qint64& off, qint64& size) const {
+        if (! m_pkgPath.isEmpty()) {
+            auto it = m_entries.find(name);
+            if (it == m_entries.end()) return false;
+            file = m_pkgPath;
+            off  = m_base + it->second.first;
+            size = it->second.second;
+            return true;
+        }
+        file = m_dir + "/" + name;
+        off  = 0;
+        size = QFileInfo(file).size();
+        return QFileInfo::exists(file);
+    }
+
+    QByteArray read(const QString& name, qint64 max = -1) const {
+        QString file;
+        qint64  off, size;
+        if (! locate(name, file, off, size)) return {};
+        QFile f(file);
+        if (! f.open(QIODevice::ReadOnly) || ! f.seek(off)) return {};
+        return f.read(max < 0 ? size : std::min(max, size));
+    }
+
+    QJsonObject json(const QString& name) const {
+        return QJsonDocument::fromJson(read(name)).object();
+    }
+
+private:
+    QString                                        m_dir;
+    QString                                        m_pkgPath;
+    qint64                                         m_base { 0 };
+    std::map<QString, std::pair<quint32, quint32>> m_entries;
+};
+} // namespace
+
+QString SceneObject::videoUnderlayUrl(const QUrl& source) const {
+    const QString     scene_path = source.isLocalFile() ? source.toLocalFile() : source.path();
+    ProjectFiles      files(scene_path);
+    const QJsonObject scene = files.json(QFileInfo(scene_path).fileName());
+
+    // Mirror WPSceneParser: the underlay must be the bottom *drawable* layer
+    // (image or particle, in file order); sounds and lights are not drawn.
+    QJsonObject bottom;
+    for (const auto& v : scene.value("objects").toArray()) {
+        auto obj      = v.toObject();
+        bool is_layer = false;
+        for (auto key : { "image", "particle" })
+            if (obj.contains(key) && ! obj.value(key).isNull()) is_layer = true;
+        if (! is_layer) continue;
+        bottom = obj;
+        break;
+    }
+    if (! bottom.contains("image") || bottom.value("visible").toBool(true) == false) return {};
+
+    const auto model = files.json(bottom.value("image").toString());
+    const auto mat   = files.json(model.value("material").toString());
+    const auto tex =
+        mat.value("passes").toArray().at(0).toObject().value("textures").toArray().at(0).toString();
+    if (tex.isEmpty()) return {};
+
+    // .tex header, then the single mip: ... i32 size, then the video bytes:
+    // an MP4 opens with a 4-byte box length and "ftyp", a WebM with the EBML
+    // magic 1A 45 DF A3. The i32 right before the data is its byte size.
+    const QString tex_name = "materials/" + tex + ".tex";
+    QString       file;
+    qint64        off, size;
+    if (! files.locate(tex_name, file, off, size)) return {};
+    const QByteArray head = files.read(tex_name, 256);
+    if (! head.startsWith("TEXV")) return {};
+    qint64 data = -1;
+    if (auto p = head.indexOf("ftyp"); p >= 8)
+        data = p - 4;
+    else if (auto e = head.indexOf(QByteArray("\x1A\x45\xDF\xA3", 4)); e >= 4)
+        data = e;
+    if (data < 4) return {};
+    qint32 mp4_size;
+    std::memcpy(&mp4_size, head.constData() + data - 4, 4);
+    const qint64 start = off + data;
+    if (mp4_size <= 0 || data + (qint64)mp4_size > size) return {};
+
+    const QString url = QString("slice://%1-%2@%3").arg(start).arg(start + mp4_size).arg(file);
+    _Q_INFO("video underlay: %s", qPrintable(url));
+    return url;
 }
 
 void SceneObject::setAssets(const QUrl& assets) {

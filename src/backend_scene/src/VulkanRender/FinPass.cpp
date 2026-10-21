@@ -158,6 +158,16 @@ void FinPass::prepare(Scene& scene, const Device& device, RenderingResources& rr
         descriptor_info.push_descriptor = true;
         GraphicsPipeline pipeline;
         pipeline.toDefault();
+        // The host composites this image with alpha. Keep ordinary scenes opaque
+        // (alpha stays at the cleared 1.0); only a video-underlay scene writes alpha.
+        if (scene.clearAlpha >= 1.0f) {
+            VkPipelineColorBlendAttachmentState color_blend {
+                .blendEnable = false,
+                .colorWriteMask =
+                    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT,
+            };
+            pipeline.setColorBlendStates(spanone { color_blend });
+        }
         pipeline.addDescriptorSetInfo(spanone { descriptor_info })
             .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
             .addInputBindingDescription(spanone { bind_description })
@@ -176,7 +186,7 @@ void FinPass::prepare(Scene& scene, const Device& device, RenderingResources& rr
 
     {
         auto& sc           = scene.clearColor;
-        m_desc.clear_value = VkClearValue { { sc[0], sc[1], sc[2], 1.0f } };
+        m_desc.clear_value = VkClearValue { { sc[0], sc[1], sc[2], scene.clearAlpha } };
     }
     setPrepared();
 }

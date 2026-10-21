@@ -33,7 +33,7 @@ void PrePass::prepare(Scene& scene, const Device& device, RenderingResources& rr
     }
     {
         auto& sc           = scene.clearColor;
-        m_desc.clear_value = VkClearValue { sc[0], sc[1], sc[2], 1.0f };
+        m_desc.clear_value = VkClearValue { sc[0], sc[1], sc[2], scene.clearAlpha };
     }
     setPrepared();
 }

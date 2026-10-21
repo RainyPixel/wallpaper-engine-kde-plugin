@@ -26,6 +26,8 @@ enum class WPTexFlagEnum : uint32_t
     // true for no repeat
     clampUVs = 1,
     sprite   = 2,
+    // the single "mip" is an MP4/WebM file, not pixels (played by the host)
+    video = 5,
 
     compo1 = 20,
     compo2 = 21,
@@ -83,6 +85,7 @@ void LoadHeader(fs::IBinaryStream& file, ImageHeader& header) {
         header.extraHeader["compo1"].val = flags[WPTexFlagEnum::compo1];
         header.extraHeader["compo2"].val = flags[WPTexFlagEnum::compo2];
         header.extraHeader["compo3"].val = flags[WPTexFlagEnum::compo3];
+        header.extraHeader["video"].val  = flags[WPTexFlagEnum::video];
     }
 
     /*
@@ -179,6 +182,16 @@ std::shared_ptr<Image> WPTexImageParser::Parse(const std::string& name) {
     auto& file     = *pfile;
     auto  startpos = file.Tell();
     LoadHeader(file, img.header);
+
+    // A video texture holds an MP4/WebM, not pixels. The host plays the bottom
+    // one underneath the scene (see VideoUnderlay); any other becomes a 1x1
+    // transparent image so its layer simply does not draw.
+    if (img.header.extraHeader["video"].val) {
+        LOG_INFO("tex \"%s\" is a video texture, rendered transparent", name.c_str());
+        auto fallback = MakeFallbackImage(name);
+        std::fill_n(fallback->slots[0].mipmaps[0].data.get(), 4, (uint8_t)0);
+        return fallback;
+    }
 
     // image
     i32 _image_count = img.header.count;

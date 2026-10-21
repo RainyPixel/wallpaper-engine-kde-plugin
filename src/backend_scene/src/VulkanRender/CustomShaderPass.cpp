@@ -428,7 +428,7 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
     {
         auto& sc           = scene.clearColor;
         m_desc.clear_value = VkClearValue {
-            .color = { sc[0], sc[1], sc[2], 1.0f },
+            .color = { sc[0], sc[1], sc[2], scene.clearAlpha },
         };
     }
     for (auto& tex : releaseTexs()) {

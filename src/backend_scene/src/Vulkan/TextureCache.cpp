@@ -439,6 +439,24 @@ void AssetCache::ReleaseScreen(ScreenToken who) {
     }
 }
 
+namespace
+{
+// bytes a tightly packed w x h level of `format` occupies
+u64 TextureBytes(TextureFormat format, u32 w, u32 h) {
+    const u64 blocks = (u64)((w + 3) / 4) * ((h + 3) / 4);
+    switch (format) {
+    case TextureFormat::BC1: return blocks * 8;
+    case TextureFormat::BC2:
+    case TextureFormat::BC3: return blocks * 16;
+    case TextureFormat::RGB8: return (u64)w * h * 3;
+    case TextureFormat::RGBA8: return (u64)w * h * 4;
+    case TextureFormat::RG8: return (u64)w * h * 2;
+    case TextureFormat::R8: return (u64)w * h;
+    }
+    return (u64)w * h * 4;
+}
+} // namespace
+
 ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who, std::string_view ns) {
     std::lock_guard<std::mutex> lk(m_mutex);
 
@@ -469,6 +487,24 @@ ImageSlotsRef AssetCache::CreateTexShared(Image& image, ScreenToken who, std::st
 
         // check data
         if (! image_slot) return {};
+        // Every mip must carry at least the bytes the copy will read, or the
+        // transfer walks past the staging buffer (an NVIDIA MMU fault, then
+        // VK_ERROR_DEVICE_LOST). Seen with video textures whose "image" data is
+        // the MP4 file while the header claims full frame dimensions.
+        for (usize j = 0; j < image_slot.mipmaps.size(); j++) {
+            const auto& md       = image_slot.mipmaps[j];
+            const u64   required = TextureBytes(image.header.format, (u32)md.width, (u32)md.height);
+            if (md.width <= 0 || md.height <= 0 || (u64)md.size < required) {
+                LOG_ERROR("texture \"%s\" mip %zu: %dx%d needs %llu bytes, has %d; not uploaded",
+                          image.key.c_str(),
+                          j,
+                          md.width,
+                          md.height,
+                          (unsigned long long)required,
+                          md.size);
+                return {};
+            }
+        }
         VkSamplerCreateInfo sampler_info {
             .sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .pNext                   = nullptr,

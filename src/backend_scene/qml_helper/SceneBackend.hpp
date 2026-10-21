@@ -69,6 +69,11 @@ public:
     void enableVulkanValid();
     void enableGenGraphviz();
 
+    // If the scene's bottom layer is a video texture (an MP4 stored inside a .tex),
+    // return an mpv URL for that MP4 (slice://start-end@file); otherwise "".
+    // The renderer skips that layer and renders the rest transparent over it.
+    Q_INVOKABLE QString videoUnderlayUrl(const QUrl& source) const;
+
     Q_INVOKABLE void setAcceptMouse(bool);
     Q_INVOKABLE void setAcceptHover(bool);
     // Send the neutral pointer (screen centre) so parallax eases back when the

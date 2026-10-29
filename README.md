@@ -95,6 +95,10 @@ To run native, scene parser, shader compiler and QML tests, configure with
 QML tests additionally need Qt 6.7+ Quick Test, Quick Controls/Layouts and Kirigami
 runtime modules.
 
+For native scene source and GPU lifetime tests, also configure with
+`-DWEKDE_GPU_TESTS=ON` and run CTest from an OpenGL/Vulkan desktop session.
+These tests use local synthetic scenes and do not need Steam assets.
+
 #### Build RPM package (Fedora)
 
 Useful for rpm-ostree/Bazzite systems where layered packages survive updates.
@@ -182,6 +186,9 @@ as soon as either one is updated.
 ### Scene (2D)
 Supported by Vulkan 1.1. Requires *Wallpaper Engine* installed for assets.
 
+Text layers and SceneScript are not implemented. Controls for scripted clocks,
+dates and scripted audio reactions therefore have no effect.
+
 ### Web
 Basic web APIs supported. WebGL may not work properly.
 
@@ -189,9 +196,12 @@ Basic web APIs supported. WebGL may not work properly.
 - **QtMultimedia** (default) — uses GStreamer
 - **MPV** — requires plugin lib compilation
 
-Video embedded in a scene's `.tex` file is not played yet. Such textures use a transparent
-placeholder instead of uploading compressed video bytes to the GPU; the other scene layers
-can still render. Ordinary video wallpapers are unaffected.
+Video embedded in a scene's `.tex` file (a "video texture") is decoded with FFmpeg and drawn
+as that layer's texture, so the layer keeps its position, effects and draw order and follows
+the scene's pause and speed. It needs FFmpeg's development files at build time (installed by
+the dependency commands above; CMake reports `Video textures: enabled`). Without them, or for
+a video FFmpeg cannot decode, the layer shows a transparent placeholder and the other layers
+still render. Ordinary video wallpapers are unaffected.
 
 ## Acknowledgments
 - [RePKG](https://github.com/notscuffed/repkg)

@@ -84,6 +84,64 @@ TEST_CASE("scene user visibility removes particle systems") {
     CHECK(hidden->paritileSys->subsystems.empty());
 }
 
+TEST_CASE("flat image shaders receive layer color and alpha") {
+    fs::VFS           vfs;
+    auto              files            = TestFiles();
+    const std::string fragment         = "uniform float g_Alpha; uniform vec3 g_Color; "
+                                         "void main() { gl_FragColor = vec4(g_Color, g_Alpha); }";
+    files->files["/shaders/test.frag"] = { fragment.begin(), fragment.end() };
+    REQUIRE(vfs.Mount("/assets", std::move(files)));
+    audio::SoundManager sound;
+    WPSceneParser       parser;
+    for (const float alpha : { 1.0f, 0.35f, 0.0f }) {
+        auto json                   = TestScene();
+        json["objects"][0]["alpha"] = alpha;
+        const std::string overrides = alpha == 1.0f ? "{}" : R"({"backgroundcolor":"0 0 0"})";
+        auto              scene     = parser.Parse("flat", json.dump(), vfs, sound, overrides);
+        REQUIRE(scene);
+        bool found = false;
+        for (const auto& node : scene->sceneGraph->GetChildren()) {
+            if (! node->HasMaterial() || node->Mesh()->Dynamic()) continue;
+            const auto& uniforms = node->Mesh()->Material()->customShader.constValues;
+            REQUIRE(uniforms.count("g_Color") == 1);
+            REQUIRE(uniforms.count("g_Alpha") == 1);
+            const auto& color = uniforms.at("g_Color");
+            CHECK(color[0] == doctest::Approx(alpha == 1.0f ? 0.7f : 0.0f));
+            CHECK(color[1] == doctest::Approx(alpha == 1.0f ? 0.6f : 0.0f));
+            CHECK(color[2] == doctest::Approx(alpha == 1.0f ? 0.5f : 0.0f));
+            CHECK(uniforms.at("g_Alpha")[0] == doctest::Approx(alpha));
+            found = true;
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("parsed scenes retain their own user property identity") {
+    fs::VFS vfs;
+    REQUIRE(vfs.Mount("/assets", TestFiles()));
+    const std::string firstProps = R"({"backgroundcolor":"0 0 0"})";
+    const std::string nextProps  = R"({"backgroundcolor":"1 0 0"})";
+    auto              first      = ParseScene(vfs, firstProps);
+    auto              next       = ParseScene(vfs, nextProps);
+    auto              defaults   = ParseScene(vfs, "");
+    REQUIRE(first);
+    REQUIRE(next);
+    REQUIRE(defaults);
+    CHECK(first->user_props_json == firstProps);
+    CHECK(next->user_props_json == nextProps);
+    CHECK(defaults->user_props_json.empty());
+    for (const auto& [scene, red] : { std::pair { first, 0.0f }, std::pair { next, 1.0f } }) {
+        bool found = false;
+        for (const auto& node : scene->sceneGraph->GetChildren()) {
+            if (! node->HasMaterial() || node->Mesh()->Dynamic()) continue;
+            const auto& values = node->Mesh()->Material()->customShader.constValues;
+            CHECK(values.at("g_Color4")[0] == red);
+            found = true;
+        }
+        CHECK(found);
+    }
+}
+
 TEST_CASE("loose project metadata supplies defaults for packed scenes and overrides win") {
     fs::VFS vfs;
     REQUIRE(vfs.Mount("/assets", TestFiles()));
@@ -110,4 +168,26 @@ TEST_CASE("loose project metadata supplies defaults for packed scenes and overri
     auto override = ParseScene(vfs, R"({"particlesvisible":true})");
     REQUIRE(override);
     CHECK(override->paritileSys->subsystems.size() == 1);
+}
+
+TEST_CASE("invalid scene structure and asset JSON fail without poisoning later parses") {
+    fs::VFS vfs;
+    auto    files    = TestFiles();
+    auto*   filesPtr = files.get();
+    REQUIRE(vfs.Mount("/assets", std::move(files)));
+    audio::SoundManager sound;
+    WPSceneParser       parser;
+    for (const auto& invalid : { std::string("malformed json"),
+                                 std::string("{}"),
+                                 std::string("{\"camera\":{},\"general\":{}}"),
+                                 std::string("{\"camera\":{},\"general\":{},\"objects\":42}") }) {
+        CHECK_FALSE(parser.Parse("bad", invalid, vfs, sound));
+    }
+    // Malformed material metadata is rejected along with malformed scene metadata.
+    const auto        material               = filesPtr->files.at("/materials/image.json");
+    const std::string invalidMaterial        = R"({"passes":42})";
+    filesPtr->files["/materials/image.json"] = { invalidMaterial.begin(), invalidMaterial.end() };
+    CHECK_FALSE(parser.Parse("bad-asset", TestScene().dump(), vfs, sound));
+    filesPtr->files["/materials/image.json"] = material;
+    REQUIRE(parser.Parse("valid", TestScene().dump(), vfs, sound));
 }

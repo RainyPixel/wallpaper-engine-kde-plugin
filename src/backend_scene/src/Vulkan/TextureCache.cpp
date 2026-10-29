@@ -227,10 +227,12 @@ std::optional<ExImageParameters> CreateExImage(uint32_t width, uint32_t height, 
     return std::nullopt;
 }
 
-inline std::optional<VmaImageParameters>
-CreateImage(const Device& device, VkExtent3D extent, u32 miplevel, VkFormat format,
-            VkSamplerCreateInfo sampler_info, VkImageUsageFlags usage,
-            VmaMemoryUsage mem_usage = VMA_MEMORY_USAGE_GPU_ONLY) {
+} // namespace
+
+std::optional<VmaImageParameters>
+wallpaper::vulkan::CreateImage(const Device& device, VkExtent3D extent, u32 miplevel,
+                               VkFormat format, VkSamplerCreateInfo sampler_info,
+                               VkImageUsageFlags usage, VmaMemoryUsage mem_usage) {
     VmaImageParameters image;
     do {
         VkImageCreateInfo info {
@@ -283,6 +285,9 @@ CreateImage(const Device& device, VkExtent3D extent, u32 miplevel, VkFormat form
     */
     return std::nullopt;
 }
+
+namespace
+{
 
 inline VkResult CopyImageData(std::span<const BufferParameters> in_bufs,
                               std::span<const VkExtent3D> in_exts, const vvk::Queue& queue,

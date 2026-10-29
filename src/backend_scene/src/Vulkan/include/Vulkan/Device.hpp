@@ -19,7 +19,8 @@ public:
     Device();
     ~Device();
 
-    static bool Create(Instance&, std::span<const Extension> exts, VkExtent2D extent, Device&);
+    static bool Create(Instance&, std::span<const Extension> exts, VkExtent2D extent, Device&,
+                       bool swapchain_readback = false);
     static bool CheckGPU(vvk::PhysicalDevice gpu, std::span<const Extension> exts,
                          VkSurfaceKHR surface);
 

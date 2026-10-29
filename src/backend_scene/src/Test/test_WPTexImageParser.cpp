@@ -444,7 +444,8 @@ TEST_SUITE("WPTexImageParser") {
         auto buf = makeTexHeader(1, 1, 1, 0, 1u << 5, 1920, 1080, 1920, 1080, 1);
         appendInt32(buf, 1);
         appendMipmapV1(buf, 1920, 1080, { 0, 0, 0, 12, 'f', 't', 'y', 'p' });
-        VFS vfs;
+        const auto payload_at = static_cast<i64>(buf.size()) - 8;
+        VFS        vfs;
         mountTex(vfs, "video", std::move(buf));
         WPTexImageParser parser(&vfs);
         auto             img = parser.Parse("video");
@@ -453,6 +454,34 @@ TEST_SUITE("WPTexImageParser") {
         REQUIRE(img->slots[0].HasValidMipmaps(img->header.format));
         CHECK(img->slots[0].width == 1);
         for (int i = 0; i < 4; ++i) CHECK(img->slots[0].mipmaps[0].data.get()[i] == 0);
+        // the renderer decodes the container from exactly this slice
+        REQUIRE(img->header.video.has_value());
+        CHECK(img->header.video->path == "/assets/materials/video.tex");
+        CHECK(img->header.video->offset == payload_at);
+        CHECK(img->header.video->size == 8);
+    }
+
+    TEST_CASE("Video texture with a payload past the end keeps only the placeholder") {
+        auto buf = makeTexHeader(1, 1, 1, 0, 1u << 5, 1920, 1080, 1920, 1080, 1);
+        appendInt32(buf, 1);
+        appendMipmapV1(buf, 1920, 1080, { 0, 0, 0, 12, 'f', 't', 'y', 'p' });
+        buf.resize(buf.size() - 4); // truncated payload
+        VFS vfs;
+        mountTex(vfs, "video_cut", std::move(buf));
+        WPTexImageParser parser(&vfs);
+        auto             img = parser.Parse("video_cut");
+        REQUIRE(img != nullptr);
+        CHECK(img->slots[0].width == 1);
+        CHECK_FALSE(img->header.video.has_value());
+    }
+
+    TEST_CASE("Ordinary textures carry no video") {
+        VFS vfs;
+        mountTex(vfs, "plain", makeSimpleRGBA8Tex(4, 4));
+        WPTexImageParser parser(&vfs);
+        auto             img = parser.Parse("plain");
+        REQUIRE(img != nullptr);
+        CHECK_FALSE(img->header.video.has_value());
     }
 
     TEST_CASE("Truncated mip payload is rejected") {

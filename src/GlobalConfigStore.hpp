@@ -17,22 +17,21 @@ public:
     static GlobalConfigBackend* instance();
 
     QVariant    value(const QString& key, const QVariant& def = {}) const;
-    void        setValue(const QString& key, const QVariant& val);
-    void        setValues(const QVariantMap& patch);
+    bool        setValue(const QString& key, const QVariant& val);
+    bool        setValues(const QVariantMap& patch);
     QVariantMap all() const;
     bool        enabled() const;
-    void        reloadFromDisk();
+    bool        reloadFromDisk();
 
 signals:
     void changed(const QString& key, const QVariant& value);
     void enabledChanged();
+    void persistenceFailed(const QString& error);
 
 private:
     QString filePath() const;
-    void    load();
-    void    persist() const;
-    // applies patch in-memory, returns keys whose value actually changed
-    QStringList apply(const QVariantMap& patch);
+    bool    readFromDisk(QVariantMap& data, QString& error) const;
+    bool    persist(const QVariantMap& data, QString& error) const;
 
     QVariantMap            m_data;
     mutable QReadWriteLock m_lock;
@@ -50,14 +49,15 @@ public:
     void setEnabled(bool on);
 
     Q_INVOKABLE QVariant    get(const QString& key, const QVariant& def = {}) const;
-    Q_INVOKABLE void        set(const QString& key, const QVariant& val);
-    Q_INVOKABLE void        setBatch(const QVariantMap& patch);
+    Q_INVOKABLE bool        set(const QString& key, const QVariant& val);
+    Q_INVOKABLE bool        setBatch(const QVariantMap& patch);
     Q_INVOKABLE QVariantMap all() const;
-    Q_INVOKABLE void        reload();
+    Q_INVOKABLE bool        reload();
 
 signals:
     void changed(const QString& key, const QVariant& value);
     void enabledChanged();
+    void persistenceFailed(const QString& error);
 };
 
 } // namespace wekde

@@ -43,22 +43,21 @@ Item {
     property var folderModels: []
 
     function loadItemFromJson(text, el) {
-        const project = Utils.parseJson(text);    
-        if(project !== null) {
-            if("title" in project)
-                el.title = project.title;
-            if("preview" in project && project.preview)
-                el.preview = project.preview;
-            if("file" in project)
-                el.file = project.file;
-            if("type" in project)
-                el.type = project.type.toLowerCase();
-            if("contentrating" in project)
-                el.contentrating = project.contentrating;
-            if("tags" in project) {
-                el.tags = project.tags.map(el => Object({key: el}));
-            }
+        const project = Utils.parseJson(text);
+        if (!project || typeof project !== "object" || Array.isArray(project))
+            throw new Error("Invalid project object");
+        for (const key of ["title", "preview", "file", "type", "contentrating"]) {
+            if (key in project && typeof project[key] !== "string")
+                throw new Error("Invalid project " + key);
         }
+        if ("tags" in project && (!Array.isArray(project.tags)
+                || project.tags.some(tag => typeof tag !== "string")))
+            throw new Error("Invalid project tags");
+        for (const key of ["title", "preview", "file", "contentrating"]) {
+            if (key in project) el[key] = project[key];
+        }
+        if ("type" in project) el.type = project.type.toLowerCase();
+        if ("tags" in project) el.tags = project.tags.map(tag => ({key: tag}));
     }
 
     function loadPlaylists() {
@@ -220,12 +219,13 @@ Item {
                                     el.playlists.push(Object({key: key}));
                             }
                         });
-                    }).catch(reason => console.error(reason));
+                        el.loaded = true;
+                    }).catch(reason => console.error("Skipping project " + el.path + ": " + reason));
                 plist.push(p);
             });
             const path = this.folder;
             Promise.all(plist).then(value => {
-                folderWorker.loadModel(path, proxyModel).then(() => resolve());
+                folderWorker.loadModel(path, proxyModel.filter(el => el.loaded)).then(() => resolve());
             }).catch(reason => {
                 console.error(reason);
                 resolve();
@@ -243,7 +243,7 @@ Item {
         this.sortModeChanged.connect(this.filterStrChanged);
         this.enabledChanged.connect(this.refresh.bind(this));
 
-        const fc = this.readfile;
+        let fc = this.readfile;
         this.readfileChanged.connect(function() {
             if(fc === root.readfile) return Promise.resolve();
             return root.refresh().then(() => { fc = root.readfile; });

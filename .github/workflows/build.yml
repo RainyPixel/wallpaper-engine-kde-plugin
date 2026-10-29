@@ -36,6 +36,8 @@ jobs:
             kirigami \
             qt6-declarative \
             qt6-webchannel \
+            qt6-webengine \
+            glfw \
             vulkan-headers \
             mpv \
             lz4
@@ -47,12 +49,24 @@ jobs:
             -G Ninja
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build -j"$(nproc)"
 
       - name: Run tests
         run: |
           ctest --test-dir build --output-on-failure
           ctest --test-dir build -R qml_tests --no-tests=error --output-on-failure
+
+      - name: Reconfigure and test without video textures
+        run: |
+          cmake -B build -S . -DWEKDE_VIDEO_TEXTURES=OFF
+          cmake --build build -j"$(nproc)"
+          ctest --test-dir build --output-on-failure
+
+      - name: Build standalone scene viewers
+        run: |
+          cmake -B build/viewer -S src/backend_scene/standalone_view \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_QML=ON -DBUILD_TESTS=ON -G Ninja
+          cmake --build build/viewer --target sceneviewer sceneviewer-qml -j"$(nproc)"
 
   # ── Fedora (secondary target distribution) ───────────────────────────────
   build-fedora:
@@ -97,6 +111,7 @@ jobs:
             libplasma-devel \
             kf6-kirigami \
             qt6-qtwebchannel-devel \
+            qt6-qtwebengine \
             qt6-qtdeclarative-devel
 
       - name: Configure
@@ -106,7 +121,7 @@ jobs:
             -G Ninja
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build -j"$(nproc)"
 
       - name: Run tests
         run: |
@@ -147,7 +162,7 @@ jobs:
             -G Ninja
 
       - name: Build
-        run: cmake --build build/hyprland -j$(nproc)
+        run: cmake --build build/hyprland -j"$(nproc)"
 
       - name: Run unit tests
         # The Wayland smoke test needs a real session and stays opt-in.

@@ -94,8 +94,10 @@ VkExtent2D               Swapchain::extent() const { return m_extent; };
 std::span<const ImageParameters> Swapchain::images() const { return m_images; }
 
 VkPresentModeKHR Swapchain::presentMode() const { return m_present_mode; };
+bool             Swapchain::supportsReadback() const { return m_readback; }
 
-bool Swapchain::Create(Device& device, VkSurfaceKHR surface, VkExtent2D extent, Swapchain& swap) {
+bool Swapchain::Create(Device& device, VkSurfaceKHR surface, VkExtent2D extent, Swapchain& swap,
+                       bool want_readback) {
     SwapChainSupportDetails swap_details;
     if (! querySwapChainSupport(device.gpu(), surface, swap_details)) return false;
 
@@ -115,6 +117,21 @@ bool Swapchain::Create(Device& device, VkSurfaceKHR surface, VkExtent2D extent, 
     VkSurfaceTransformFlagBitsKHR preTransform   = surfaceCapabilities.currentTransform;
     VkCompositeAlphaFlagBitsKHR   compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 
+    // Frame readback (debug screenshots) needs the images as a copy source. Ask
+    // for it only on request and only where the surface allows it, so ordinary
+    // swapchains keep exactly their previous usage.
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swap.m_readback         = false;
+    if (want_readback) {
+        if (surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) {
+            usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            swap.m_readback = true;
+        } else {
+            LOG_ERROR("surface does not support TRANSFER_SRC swapchain images; frame readback "
+                      "is unavailable");
+        }
+    }
+
     VkSwapchainCreateInfoKHR sci {
         .sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .pNext            = nullptr,
@@ -124,7 +141,7 @@ bool Swapchain::Create(Device& device, VkSurfaceKHR surface, VkExtent2D extent, 
         .imageColorSpace  = swap.m_format.colorSpace,
         .imageExtent      = swap.m_extent,
         .imageArrayLayers = 1,
-        .imageUsage       = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage       = usage,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform     = preTransform,
         .compositeAlpha   = compositeAlpha,

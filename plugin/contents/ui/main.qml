@@ -56,7 +56,9 @@ Rectangle {
     property var curOpt: ({})
     property string workshopid: {
         const wid = effCfg("WallpaperWorkShopId", wallpaper.configuration.WallpaperWorkShopId);
-        pyext.read_wallpaper_config(wid).then((res) => this.curOpt = res);
+        pyext.read_wallpaper_config(wid).then(res => {
+            if (background.workshopid === wid) background.curOpt = res;
+        }).catch(error => console.error(error));
         return wid;
     }
     function get_opt_value(key, def) {
@@ -104,29 +106,21 @@ Rectangle {
     property int    perOptChanged: wallpaper.configuration.PerOptChanged
     onPerOptChangedChanged: {
         console.log("main.qml onPerOptChangedChanged, perOptChanged:", perOptChanged, "workshopid:", workshopid);
-        pyext.read_wallpaper_config(workshopid).then((res) => {
+        const wid = workshopid;
+        pyext.read_wallpaper_config(wid).then((res) => {
             console.log("main.qml read_wallpaper_config result:", JSON.stringify(res));
-            this.curOpt = res;
-        });
+            if (background.workshopid === wid) background.curOpt = res;
+        }).catch(error => console.error(error));
     }
 
     property bool   pauseOnGamemode: wallpaper.configuration.PauseOnGamemode
 
     // auto pause
-    property bool   ok: !windowModel.reqPause && !powerSource.reqPause && !(gamemodeLoader.item ? gamemodeLoader.item.reqPause : false)
+    property bool   ok: !ttyMonitor.sleeping && !windowModel.reqPause && !powerSource.reqPause && !(gamemodeLoader.item ? gamemodeLoader.item.reqPause : false)
 
-    // detect TTY switch and pause wallpaper(s)
+    // login1 PrepareForSleep is independent of the other pause reasons.
     TTYSwitchMonitor {
         id: ttyMonitor
-        onTtySwitch: {
-            if (sleep) {
-                console.log("Preparing for sleep (possibly a VT switch)");
-                this.pause();
-            } else {
-                console.log("Waking up (VT switch back)");
-                this.play();
-            }
-        }
     }
 
     Loader {
@@ -189,7 +183,8 @@ Rectangle {
     }
 
     function getWorkshopIDPath() {
-        return Common.getWorkshopDir(this.steamlibrary) + `/${this.workshopid}`;
+        return Common.getProjectDirectory(wallpaperPath, workshopid,
+            steamDetect.projectDirs.length ? steamDetect.projectDirs : Common.getProjectDirs(steamlibrary));
     }
 
     onMouseInputChanged: {
@@ -302,6 +297,7 @@ Rectangle {
     }
     Connections {
         target: globalCfg
+        function onPersistenceFailed(error) { console.error("Cannot update shared wallpaper settings:", error); }
         function onChanged(key, value) { background.globalRev++; }
         function onEnabledChanged()    { background.globalRev++; }
     }
@@ -475,6 +471,7 @@ Rectangle {
     }
    
     function autoPause() {
+        if (!backendLoader.item) return;
         background.ok
             ? backendLoader.item.play()
             : backendLoader.item.pause();

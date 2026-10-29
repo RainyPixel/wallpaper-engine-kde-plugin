@@ -179,6 +179,12 @@ public:
             m_channels.push_back(chnw);
         }
     }
+    void ReplaceChannels(Device& pending) {
+        std::scoped_lock lock(m_mutex, pending.m_mutex);
+        for (auto& channel : pending.m_channels) channel.chn->PassDeviceDesc(GetDesc());
+        m_channels.swap(pending.m_channels);
+        pending.m_channels.clear();
+    }
     void UnmountAll() {
         {
             std::unique_lock<std::mutex> lock { m_mutex };

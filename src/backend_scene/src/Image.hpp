@@ -5,6 +5,8 @@
 #include <limits>
 #include <vector>
 #include <memory>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <functional>
 
@@ -32,6 +34,15 @@ struct ImageData {
     ImageData() = default;
 };
 
+// Where a video texture's payload lives. A Wallpaper Engine "video texture" is a
+// .tex whose single mip holds an MP4/WebM file verbatim. WPTexImageParser is the
+// only place that locates it; the renderer decodes it from the scene VFS.
+struct EmbeddedVideo {
+    std::string path;         // VFS path of the .tex
+    i64         offset { 0 }; // first byte of the container inside that file
+    i64         size { 0 };   // container size in bytes
+};
+
 struct ImageHeader {
     // these two size is not for tex, just come from we
     // using Slot's size for tex
@@ -53,6 +64,10 @@ struct ImageHeader {
     SpriteAnimation spriteAnim;
     // for specific property
     std::unordered_map<std::string, ImageExtra> extraHeader;
+
+    // Set only for video textures (see EmbeddedVideo). The image itself is then
+    // a transparent placeholder, used whenever the video cannot be decoded.
+    std::optional<EmbeddedVideo> video;
 };
 
 // slot is one singal image

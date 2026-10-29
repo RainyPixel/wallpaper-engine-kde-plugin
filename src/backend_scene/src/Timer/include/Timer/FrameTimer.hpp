@@ -23,6 +23,7 @@ public:
     double FrameTime() const;
     double IdeaTime() const;
 
+    // SetRequiredFps and frame bookkeeping belong to the same render thread.
     void SetRequiredFps(u16);
 
     // only used with one render

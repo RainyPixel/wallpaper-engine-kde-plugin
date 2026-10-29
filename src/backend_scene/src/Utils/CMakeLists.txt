@@ -7,6 +7,7 @@ FpsCounter.cpp
 Algorism.cpp	
 Sha.cpp
 DynamicLibrary.cpp
+PpmWriter.cpp
 )
 
 target_link_libraries(${LIB_NAME}

@@ -3,6 +3,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,43 +21,46 @@ Q_GLOBAL_STATIC(GlobalConfigBackend, g_backend)
 
 GlobalConfigBackend* GlobalConfigBackend::instance() { return g_backend; }
 
-GlobalConfigBackend::GlobalConfigBackend() { load(); }
+GlobalConfigBackend::GlobalConfigBackend() { reloadFromDisk(); }
 
 QString GlobalConfigBackend::filePath() const {
-    QString dir =
-        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/wekde";
-    QDir().mkpath(dir);
-    return dir + "/global.json";
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+           "/wekde/global.json";
 }
 
-void GlobalConfigBackend::load() {
-    QFile f(filePath());
-    if (! f.open(QIODevice::ReadOnly)) return;
-    auto         doc = QJsonDocument::fromJson(f.readAll());
-    QWriteLocker locker(&m_lock);
-    if (doc.isObject()) m_data = doc.object().toVariantMap();
-}
-
-void GlobalConfigBackend::persist() const {
-    QSaveFile f(filePath());
-    if (! f.open(QIODevice::WriteOnly)) {
-        qWarning() << "GlobalConfigBackend: cannot write" << filePath();
-        return;
+bool GlobalConfigBackend::readFromDisk(QVariantMap& data, QString& error) const {
+    QFile file(filePath());
+    if (! file.exists()) return true;
+    if (! file.open(QIODevice::ReadOnly)) {
+        error = file.errorString();
+        return false;
     }
-    QJsonDocument doc(QJsonObject::fromVariantMap(m_data));
-    f.write(doc.toJson(QJsonDocument::Indented));
-    f.commit();
+    const auto doc = QJsonDocument::fromJson(file.readAll());
+    if (file.error() != QFileDevice::NoError || ! doc.isObject()) {
+        error = QStringLiteral("Invalid or unreadable global configuration");
+        return false;
+    }
+    data = doc.object().toVariantMap();
+    return true;
 }
 
-QStringList GlobalConfigBackend::apply(const QVariantMap& patch) {
-    QStringList changedKeys;
-    for (auto it = patch.constBegin(); it != patch.constEnd(); ++it) {
-        if (m_data.value(it.key()) != it.value()) {
-            m_data.insert(it.key(), it.value());
-            changedKeys << it.key();
-        }
+bool GlobalConfigBackend::persist(const QVariantMap& data, QString& error) const {
+    const QString path = filePath();
+    if (! QDir().mkpath(QFileInfo(path).absolutePath())) {
+        error = QStringLiteral("Cannot create global configuration directory");
+        return false;
     }
-    return changedKeys;
+    QSaveFile file(path);
+    if (! file.open(QIODevice::WriteOnly)) {
+        error = file.errorString();
+        return false;
+    }
+    const QByteArray bytes = QJsonDocument(QJsonObject::fromVariantMap(data)).toJson();
+    if (file.write(bytes) != bytes.size() || ! file.commit()) {
+        error = file.errorString();
+        return false;
+    }
+    return true;
 }
 
 QVariant GlobalConfigBackend::value(const QString& key, const QVariant& def) const {
@@ -71,30 +75,46 @@ QVariantMap GlobalConfigBackend::all() const {
     return m_data;
 }
 
-void GlobalConfigBackend::setValue(const QString& key, const QVariant& val) {
-    setValues({ { key, val } });
+bool GlobalConfigBackend::setValue(const QString& key, const QVariant& val) {
+    return setValues({ { key, val } });
 }
 
-void GlobalConfigBackend::setValues(const QVariantMap& patch) {
+bool GlobalConfigBackend::setValues(const QVariantMap& patch) {
     QStringList changedKeys;
+    QVariantMap updated;
+    QString     error;
+    bool        saved;
     {
         QWriteLocker locker(&m_lock);
-        changedKeys = apply(patch);
-        if (changedKeys.isEmpty()) return;
-        persist();
+        updated = m_data;
+        for (auto it = patch.constBegin(); it != patch.constEnd(); ++it) {
+            if (updated.value(it.key()) != it.value()) {
+                updated.insert(it.key(), it.value());
+                changedKeys << it.key();
+            }
+        }
+        if (changedKeys.isEmpty()) return true;
+        QVariantMap disk;
+        saved = readFromDisk(disk, error) && persist(updated, error);
+        if (saved) m_data = updated;
     }
-    for (const auto& key : changedKeys) emit changed(key, value(key));
+    if (! saved) {
+        qWarning() << "GlobalConfigBackend: cannot save" << filePath() << error;
+        emit persistenceFailed(error);
+        return false;
+    }
+    for (const auto& key : changedKeys) emit changed(key, updated.value(key));
     if (changedKeys.contains(k_enabled_key)) emit enabledChanged();
+    return true;
 }
 
-void GlobalConfigBackend::reloadFromDisk() {
+bool GlobalConfigBackend::reloadFromDisk() {
     QVariantMap fresh;
-    {
-        QFile f(filePath());
-        if (f.open(QIODevice::ReadOnly)) {
-            auto doc = QJsonDocument::fromJson(f.readAll());
-            if (doc.isObject()) fresh = doc.object().toVariantMap();
-        }
+    QString     error;
+    if (! readFromDisk(fresh, error)) {
+        qWarning() << "GlobalConfigBackend: cannot reload" << filePath() << error;
+        emit persistenceFailed(error);
+        return false;
     }
     QStringList changedKeys;
     {
@@ -105,11 +125,12 @@ void GlobalConfigBackend::reloadFromDisk() {
         // added/modified keys
         for (auto it = fresh.constBegin(); it != fresh.constEnd(); ++it)
             if (m_data.value(it.key()) != it.value()) changedKeys << it.key();
-        if (changedKeys.isEmpty()) return;
+        if (changedKeys.isEmpty()) return true;
         m_data = fresh;
     }
-    for (const auto& key : changedKeys) emit changed(key, value(key));
+    for (const auto& key : changedKeys) emit changed(key, fresh.value(key));
     if (changedKeys.contains(k_enabled_key)) emit enabledChanged();
+    return true;
 }
 
 // --- QML proxy ---
@@ -118,6 +139,8 @@ GlobalConfig::GlobalConfig(QObject* parent): QObject(parent) {
     auto* backend = GlobalConfigBackend::instance();
     connect(backend, &GlobalConfigBackend::changed, this, &GlobalConfig::changed);
     connect(backend, &GlobalConfigBackend::enabledChanged, this, &GlobalConfig::enabledChanged);
+    connect(
+        backend, &GlobalConfigBackend::persistenceFailed, this, &GlobalConfig::persistenceFailed);
 }
 
 bool GlobalConfig::enabled() const { return GlobalConfigBackend::instance()->enabled(); }
@@ -128,14 +151,14 @@ QVariant GlobalConfig::get(const QString& key, const QVariant& def) const {
     return GlobalConfigBackend::instance()->value(key, def);
 }
 
-void GlobalConfig::set(const QString& key, const QVariant& val) {
-    GlobalConfigBackend::instance()->setValue(key, val);
+bool GlobalConfig::set(const QString& key, const QVariant& val) {
+    return GlobalConfigBackend::instance()->setValue(key, val);
 }
 
-void GlobalConfig::setBatch(const QVariantMap& patch) {
-    GlobalConfigBackend::instance()->setValues(patch);
+bool GlobalConfig::setBatch(const QVariantMap& patch) {
+    return GlobalConfigBackend::instance()->setValues(patch);
 }
 
 QVariantMap GlobalConfig::all() const { return GlobalConfigBackend::instance()->all(); }
 
-void GlobalConfig::reload() { GlobalConfigBackend::instance()->reloadFromDisk(); }
+bool GlobalConfig::reload() { return GlobalConfigBackend::instance()->reloadFromDisk(); }

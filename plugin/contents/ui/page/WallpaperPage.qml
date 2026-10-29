@@ -9,6 +9,7 @@ import ".."
 import "../components"
 
 import "../js/utils.mjs" as Utils
+import "../js/wallpaper-config.mjs" as WallpaperConfig
 import "../js/bbcode.mjs" as BBCode
 
 import org.kde.plasma.core 2.0 as PlasmaCore
@@ -19,13 +20,27 @@ import org.kde.kirigami 2.6 as Kirigami
 import org.kde.kquickcontrolsaddons 2.0
 
 RowLayout {
+    id: wallpaperPage
     Layout.fillWidth: true
+    property string persistenceError: ""
+
+    function showPersistenceError(error) {
+        persistenceError = String(error);
+        persistenceErrorDialog.open();
+    }
+    QQC.Dialog {
+        id: persistenceErrorDialog
+        title: "Wallpaper settings could not be saved"
+        standardButtons: QQC.Dialog.Ok
+        contentItem: Label { text: wallpaperPage.persistenceError; wrapMode: Text.Wrap }
+    }
+
 
     // Наследуем тему от родителя
     Kirigami.Theme.inherit: true
 
     function saveConfig() {
-        right_opts.save_changes();
+        return right_opts.save_changes();
     }
     
     Control {
@@ -559,32 +574,27 @@ RowLayout {
 
                     onWorkshopidChanged: {
                         if (workshopid) {
-                            pyext.read_wallpaper_config(workshopid).then(res => {
-                                config = res;
-                            });
+                            const wid = workshopid;
+                            pyext.read_wallpaper_config(wid).then(res => {
+                                if (workshopid === wid) config = res;
+                            }).catch(error => console.error(error));
                         } else {
                             config = {};
                         }
                     }
                     Component.onCompleted: {
                         if (workshopid) {
-                            pyext.read_wallpaper_config(workshopid).then(res => {
-                                config = res;
-                            });
+                            const wid = workshopid;
+                            pyext.read_wallpaper_config(wid).then(res => {
+                                if (workshopid === wid) config = res;
+                            }).catch(error => console.error(error));
                         }
                     }
                     function save_changes() {
-                        console.log("save_changes called, config_changes:", JSON.stringify(config_changes));
-                        config_resets.forEach((wid) => {
-                            pyext.reset_wallpaper_config(wid).then(res => {});
+                        return WallpaperConfig.savePending(pyext, config_changes, config_resets).then(() => true).catch(error => {
+                            wallpaperPage.showPersistenceError(error);
+                            return false;
                         });
-                        Object.entries(config_changes).forEach(([wid, cfg]) => {
-                            console.log("saving config for wid:", wid, "cfg:", JSON.stringify(cfg));
-                            pyext.write_wallpaper_config(wid, cfg);
-                        });
-                        // Clear after saving
-                        config_changes = {};
-                        config_resets.clear();
                     }
                     function set_config(key, val) {
                         console.log("set_config called, key:", key, "val:", val, "workshopid:", workshopid);
@@ -760,6 +770,7 @@ RowLayout {
                         const projectPath = Common.getWpModelProjectPath(right_content.wpmodel);
                         if (wid && wpPath && wpPath.match(Common.regex_path_check)) {
                             pyext.readfile(Common.urlNative(projectPath)).then(value => {
+                                if (workshopid !== wid || right_content.wpmodel.path !== wpPath) return;
                                 const project = Utils.parseJson(value);
                                 if (project && project.general && project.general.properties) {
                                     const props = project.general.properties;
@@ -797,7 +808,8 @@ RowLayout {
                                 }
                             }).catch(reason => {
                                 console.error(`read project.json error: ${reason}`);
-                                userProperties = [];
+                                if (workshopid === wid && right_content.wpmodel.path === wpPath)
+                                    userProperties = [];
                             });
                         } else {
                             userProperties = [];
@@ -806,10 +818,11 @@ RowLayout {
                     }
 
                     property bool _loadConfig: {
-                        if (workshopid) {
-                            pyext.read_wallpaper_config(workshopid).then(res => {
-                                propConfig = res || {};
-                            });
+                        const wid = workshopid;
+                        if (wid) {
+                            pyext.read_wallpaper_config(wid).then(res => {
+                                if (workshopid === wid) propConfig = res || {};
+                            }).catch(error => console.error(error));
                         }
                         return true;
                     }
@@ -825,10 +838,9 @@ RowLayout {
                         // Build config to save: merge with existing under 'user_props' key
                         const userPropsConfig = {};
                         userPropsConfig['user_props'] = Object.assign({}, propConfig['user_props'] || {}, propChanges);
-                        pyext.write_wallpaper_config(workshopid, userPropsConfig);
-
-                        // Signal main.qml to reload config
-                        cfg_PerOptChanged++;
+                        pyext.write_wallpaper_config(workshopid, userPropsConfig).then(() => {
+                            cfg_PerOptChanged++;
+                        }).catch(error => wallpaperPage.showPersistenceError(error));
                     }
 
                     function getPropValue(key, defaultVal) {
@@ -839,13 +851,15 @@ RowLayout {
                     }
 
                     function resetUserProps() {
-                        propChanges = {};
                         const resetConfig = { 'user_props': {} };
-                        pyext.write_wallpaper_config(workshopid, resetConfig);
-                        propConfig = {};
-
-                        // Signal main.qml to reload config
-                        cfg_PerOptChanged++;
+                        const wid = workshopid;
+                        pyext.write_wallpaper_config(wid, resetConfig).then(() => {
+                            if (workshopid === wid) {
+                                propChanges = {};
+                                propConfig = {};
+                            }
+                            cfg_PerOptChanged++;
+                        }).catch(error => wallpaperPage.showPersistenceError(error));
                     }
 
                     header.text: 'User Properties'
@@ -983,6 +997,7 @@ RowLayout {
                         const path = Common.getWpModelProjectPath(right_content.wpmodel);
                         if (path) {
                             pyext.readfile(Common.urlNative(path)).then(value => {
+                                if (Common.getWpModelProjectPath(right_content.wpmodel) !== path) return;
                                 const project = Utils.parseJson(value);
                                 const desc = project && project.description ? project.description : '';
                                 descriptionTextArea.visible = Boolean(desc);

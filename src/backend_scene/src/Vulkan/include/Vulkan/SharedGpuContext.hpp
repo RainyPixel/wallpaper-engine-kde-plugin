@@ -19,6 +19,8 @@ struct GpuContextCreateInfo {
     bool                           offscreen { true };
     bool                           share_enabled { true };
     bool                           enable_valid_layer { false };
+    // Surface contexts only: make swapchain images readable (debug screenshots).
+    bool swapchain_readback { false };
     // Creates a surface on the freshly built instance. Empty for offscreen.
     std::function<VkResult(VkInstance, VkSurfaceKHR*)> create_surface;
 };

@@ -98,7 +98,7 @@ std::vector<VkDeviceQueueCreateInfo> Device::ChooseDeviceQueue(VkSurfaceKHR surf
 }
 
 bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D extent,
-                    Device& device) {
+                    Device& device, bool swapchain_readback) {
     device.dld      = vvk::DeviceDispatch { inst.inst().Dispatch() };
     device.m_gpu    = inst.gpu();
     device.m_limits = inst.gpu().GetProperties().limits;
@@ -136,7 +136,8 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
     device.m_present_queue.handle  = device.m_device.GetQueue(device.m_present_queue.family_index);
 
     if (rq_surface) {
-        if (! Swapchain::Create(device, *inst.surface(), extent, device.m_swapchain)) {
+        if (! Swapchain::Create(
+                device, *inst.surface(), extent, device.m_swapchain, swapchain_readback)) {
             LOG_ERROR("create swapchain failed");
             return false;
         }

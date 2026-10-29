@@ -3,11 +3,14 @@
 #include "Swapchain/ExSwapchain.hpp"
 #include "Device.hpp"
 #include <cstdio>
+#include <memory>
 
 namespace wallpaper
 {
 namespace vulkan
 {
+
+class SharedGpuContext;
 
 struct VulkanExHandle : NoCopy {
     ExHandle          handle;
@@ -31,8 +34,9 @@ class VulkanExSwapchain : public ExSwapchain {
     using atomic_ = std::atomic<ExHandle*>;
 
 public:
-    VulkanExSwapchain(std::array<VulkanExHandle, 3> handles, VkExtent2D ext)
-        : m_handles(std::move(handles)), m_extent(ext) {
+    VulkanExSwapchain(std::array<VulkanExHandle, 3> handles, VkExtent2D ext,
+                      std::shared_ptr<SharedGpuContext> gpu)
+        : m_gpu(std::move(gpu)), m_handles(std::move(handles)), m_extent(ext) {
         int index = 0;
         for (auto& h : m_handles) {
             auto& handle  = h.handle;
@@ -65,15 +69,18 @@ protected:
     atomic_& inprogress() override { return m_inprogress; };
 
 private:
-    std::array<VulkanExHandle, 3> m_handles;
-    atomic_                       m_presented { nullptr };
-    atomic_                       m_ready { nullptr };
-    atomic_                       m_inprogress { nullptr };
-    VkExtent2D                    m_extent;
+    // Imported frames can outlive the producer, including its private device.
+    std::shared_ptr<SharedGpuContext> m_gpu;
+    std::array<VulkanExHandle, 3>     m_handles;
+    atomic_                           m_presented { nullptr };
+    atomic_                           m_ready { nullptr };
+    atomic_                           m_inprogress { nullptr };
+    VkExtent2D                        m_extent;
 };
 
 inline std::unique_ptr<VulkanExSwapchain> CreateExSwapchain(TextureCache& rt_pool, uint w, uint h,
-                                                            VkImageTiling tiling) {
+                                                            VkImageTiling tiling,
+                                                            std::shared_ptr<SharedGpuContext> gpu) {
     std::array<VulkanExHandle, 3> handles;
     for (auto& handle : handles) {
         if (auto rv = rt_pool.CreateExTex(w, h, VK_FORMAT_R8G8B8A8_UNORM, tiling); rv.has_value())
@@ -93,7 +100,8 @@ inline std::unique_ptr<VulkanExSwapchain> CreateExSwapchain(TextureCache& rt_poo
         VK_CHECK_RESULT_ACT(return nullptr, device.handle().getSemaphoreFdKHR(&fd_info,
     &handle_sem.handle.fd));
     }*/
-    return std::make_unique<VulkanExSwapchain>(std::move(handles), VkExtent2D { w, h });
+    return std::make_unique<VulkanExSwapchain>(
+        std::move(handles), VkExtent2D { w, h }, std::move(gpu));
 }
 
 } // namespace vulkan

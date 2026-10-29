@@ -73,6 +73,8 @@ private:
     Desc m_desc;
     bool m_cached { false };
     bool m_uses_time_uniforms { false };
+    // samples a live video texture, so its output changes every frame
+    bool m_samples_video { false };
     // decided in prepare(): output never changes after the first frame, so
     // execute() may be skipped on subsequent frames (graph-aware, see prepare)
     bool m_frame_static { false };

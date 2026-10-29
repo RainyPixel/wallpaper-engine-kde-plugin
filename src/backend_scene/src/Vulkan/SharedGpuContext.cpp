@@ -57,7 +57,8 @@ std::shared_ptr<SharedGpuContext> SharedGpuContext::Create(const GpuContextCreat
         };
         if (! ctx->m_instance.ChoosePhysicalDevice(check_gpu, ci.uuid)) return nullptr;
     }
-    if (! Device::Create(ctx->m_instance, ci.device_exts, ci.extent, ctx->m_device)) {
+    if (! Device::Create(
+            ctx->m_instance, ci.device_exts, ci.extent, ctx->m_device, ci.swapchain_readback)) {
         LOG_ERROR("init vulkan device failed");
         return nullptr;
     }

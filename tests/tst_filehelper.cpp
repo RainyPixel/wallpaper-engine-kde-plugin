@@ -16,6 +16,7 @@
 #include <QVariantMap>
 
 #include "FileHelper.hpp"
+#include "ConfigTestUtils.hpp"
 
 using namespace wekde;
 
@@ -24,6 +25,7 @@ class TestFileHelper : public QObject {
 
 private:
     QTemporaryDir m_tmp;
+    QByteArray    m_previousConfigHome = qgetenv("XDG_CONFIG_HOME");
 
     // A steam library laid out the way Steam does, enough of it for
     // steam::detectLibrariesIn() to accept it.
@@ -73,17 +75,17 @@ private:
 private slots:
     // ── test-suite setup / teardown ───────────────────────────────────────────
     void initTestCase() {
-        // Redirect QStandardPaths to a safe test location so tests never
-        // touch the real user config directory.
-        QStandardPaths::setTestModeEnabled(true);
         QVERIFY2(m_tmp.isValid(), "Could not create temporary directory for tests");
+        qputenv("XDG_CONFIG_HOME", m_tmp.filePath("config").toUtf8());
+        QCOMPARE(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation),
+                 m_tmp.filePath("config"));
     }
 
     void cleanupTestCase() {
-        QString testCfg =
-            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/wekde";
-        QDir(testCfg).removeRecursively();
-        QStandardPaths::setTestModeEnabled(false);
+        if (m_previousConfigHome.isNull())
+            qunsetenv("XDG_CONFIG_HOME");
+        else
+            qputenv("XDG_CONFIG_HOME", m_previousConfigHome);
     }
 
     // ── readFile ──────────────────────────────────────────────────────────────
@@ -322,75 +324,154 @@ private slots:
         cfg["volume"] = 75;
         cfg["fps"]    = 30;
         cfg["mute"]   = false;
-        helper.writeWallpaperConfig(id, cfg);
+        QVERIFY(helper.writeWallpaperConfig(id, cfg));
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["volume"].toInt(), 75);
         QCOMPARE(got["fps"].toInt(), 30);
         QCOMPARE(got["mute"].toBool(), false);
 
-        helper.resetWallpaperConfig(id);
+        QVERIFY(helper.resetWallpaperConfig(id));
     }
 
     void config_write_mergesPreviousValues() {
         FileHelper    helper;
         const QString id = "test_merge";
 
-        helper.writeWallpaperConfig(id, { { "volume", 50 }, { "fps", 60 } });
+        QVERIFY(helper.writeWallpaperConfig(id, { { "volume", 50 }, { "fps", 60 } }));
 
         // Partial update: only change volume
-        helper.writeWallpaperConfig(id, { { "volume", 80 } });
+        QVERIFY(helper.writeWallpaperConfig(id, { { "volume", 80 } }));
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["volume"].toInt(), 80);
         QCOMPARE(got["fps"].toInt(), 60); // unchanged
 
-        helper.resetWallpaperConfig(id);
+        QVERIFY(helper.resetWallpaperConfig(id));
     }
 
     void config_write_addsNewKey() {
         FileHelper    helper;
         const QString id = "test_newkey";
 
-        helper.writeWallpaperConfig(id, { { "a", 1 } });
-        helper.writeWallpaperConfig(id, { { "b", 2 } });
+        QVERIFY(helper.writeWallpaperConfig(id, { { "a", 1 } }));
+        QVERIFY(helper.writeWallpaperConfig(id, { { "b", 2 } }));
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["a"].toInt(), 1);
         QCOMPARE(got["b"].toInt(), 2);
 
-        helper.resetWallpaperConfig(id);
+        QVERIFY(helper.resetWallpaperConfig(id));
     }
 
     void config_reset_removesConfig() {
         FileHelper    helper;
         const QString id = "test_reset";
 
-        helper.writeWallpaperConfig(id, { { "key", "value" } });
+        QVERIFY(helper.writeWallpaperConfig(id, { { "key", "value" } }));
         QVERIFY(! helper.readWallpaperConfig(id).isEmpty());
 
-        helper.resetWallpaperConfig(id);
+        QVERIFY(helper.resetWallpaperConfig(id));
         QVERIFY(helper.readWallpaperConfig(id).isEmpty());
     }
 
     void config_reset_nonExistent_noError() {
         FileHelper helper;
         // Resetting a config that was never written must not crash or throw
-        helper.resetWallpaperConfig("__never_existed__");
+        QVERIFY(helper.resetWallpaperConfig("__never_existed__"));
         QVERIFY(helper.readWallpaperConfig("__never_existed__").isEmpty());
+    }
+
+    void config_invalidExistingFile_isNotOverwritten_data() {
+        QTest::addColumn<QByteArray>("original");
+        QTest::newRow("malformed") << QByteArray("not valid json {{{");
+        QTest::newRow("array") << QByteArray("[1, 2, 3]");
+        QTest::newRow("empty") << QByteArray();
+    }
+
+    void config_invalidExistingFile_isNotOverwritten() {
+        QFETCH(QByteArray, original);
+        FileHelper    helper;
+        const QString id = "invalid_existing";
+        const QString path =
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+            "/wekde/wallpaper/" + id + ".json";
+        QVERIFY(writeText(path, original));
+        QVERIFY(! helper.writeWallpaperConfig(id, { { "volume", 50 } }));
+        QCOMPARE(helper.readFile(path), original);
+        QVERIFY(helper.resetWallpaperConfig(id));
+        QVERIFY(! QFileInfo::exists(path));
+    }
+
+    void config_reset_failureIsReported() {
+        FileHelper    helper;
+        const QString id = "reset_directory";
+        const QString path =
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+            "/wekde/wallpaper/" + id + ".json";
+        QVERIFY(writeText(path + "/retained", "original"));
+        QVERIFY(! helper.resetWallpaperConfig(id));
+        QCOMPARE(helper.readFile(path + "/retained"), QByteArray("original"));
+    }
+
+    void config_failedWrite_preservesPreviousFile() {
+        FileHelper    helper;
+        const QString id = "failed_write";
+        QVERIFY(helper.writeWallpaperConfig(id, { { "volume", 50 } }));
+        const QString path =
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+            "/wekde/wallpaper/" + id + ".json";
+        const QByteArray previous = helper.readFile(path);
+        {
+            ScopedFileSizeLimit limit(64);
+            QVERIFY(limit.active());
+            QVERIFY(! helper.writeWallpaperConfig(id, { { "large", QString(4096, 'x') } }));
+        }
+        QCOMPARE(helper.readFile(path), previous);
+    }
+
+    void config_failedReplacement_preservesPreviousFile_data() {
+        QTest::addColumn<bool>("malformed");
+        QTest::newRow("valid old config") << false;
+        QTest::newRow("malformed old config") << true;
+    }
+
+    void config_failedReplacement_preservesPreviousFile() {
+        QFETCH(bool, malformed);
+        FileHelper    helper;
+        const QString id = "failed_replacement";
+        QVERIFY(helper.writeWallpaperConfig(id, { { "volume", 50 }, { "fps", 30 } }));
+        const QString path =
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+            "/wekde/wallpaper/" + id + ".json";
+        if (malformed) QVERIFY(writeText(path, "malformed old config"));
+        const QByteArray  previous = helper.readFile(path);
+        const QVariantMap replacement { { "large", QString(4096, 'x') } };
+        {
+            ScopedFileSizeLimit limit(64);
+            QVERIFY(limit.active());
+            QVERIFY(! helper.writeWallpaperConfig(id, replacement, true));
+        }
+        QCOMPARE(helper.readFile(path), previous);
+        QVERIFY(helper.writeWallpaperConfig(id, replacement, true));
+        QCOMPARE(helper.readWallpaperConfig(id), replacement);
+        QVERIFY(helper.writeWallpaperConfig(id, { { "volume", 80 } }));
+        QCOMPARE(helper.readWallpaperConfig(id).value("large"), replacement.value("large"));
+        QCOMPARE(helper.readWallpaperConfig(id).value("volume").toInt(), 80);
     }
 
     void config_stringValues_preserved() {
         FileHelper    helper;
         const QString id = "test_strings";
 
-        helper.writeWallpaperConfig(id, { { "name", "My Wallpaper" }, { "path", "/some/path" } });
+        QVERIFY(helper.writeWallpaperConfig(
+            id, { { "name", "My Wallpaper" }, { "path", "/some/path" } }));
 
         QVariantMap got = helper.readWallpaperConfig(id);
         QCOMPARE(got["name"].toString(), QString("My Wallpaper"));
         QCOMPARE(got["path"].toString(), QString("/some/path"));
 
-        helper.resetWallpaperConfig(id);
+        QVERIFY(helper.resetWallpaperConfig(id));
     }
 
     // ── detectSteam ───────────────────────────────────────────────────────────

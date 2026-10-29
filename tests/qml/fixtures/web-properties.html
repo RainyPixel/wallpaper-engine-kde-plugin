@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<html><body><script>
+window.receivedGeneral = [];
+window.receivedUser = [];
+window.wallpaperPropertyListener = {
+    applyGeneralProperties(properties) { window.receivedGeneral.push(properties); },
+    applyUserProperties(properties) { window.receivedUser.push(properties); }
+};
+</script></body></html>

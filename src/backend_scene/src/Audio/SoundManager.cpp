@@ -73,9 +73,10 @@ private:
 std::unique_ptr<SoundStream>
 wallpaper::audio::CreateSoundStream(std::shared_ptr<wallpaper::fs::IBinaryStream> stream,
                                     const SoundStream::Desc&                      desc) {
+    if (! stream) return nullptr;
     BStreamWrapper sw { stream };
     auto           decoder = std::make_unique<miniaudio::Decoder<BStreamWrapper>>(std::move(sw));
-    decoder->Init(ToSSDesc(desc));
+    if (! decoder->Init(ToSSDesc(desc))) return nullptr;
     return std::make_unique<SoundStream_impl<miniaudio::Decoder<BStreamWrapper>>>(
         std::move(decoder));
 }
@@ -109,6 +110,10 @@ bool SoundManager::Init() {
 bool SoundManager::IsInited() const { return pImpl->device.IsInited(); }
 void SoundManager::Play() { pImpl->device.Start(); }
 void SoundManager::Pause() { pImpl->device.Stop(); }
+
+void SoundManager::ReplaceStreams(SoundManager& pending) {
+    pImpl->device.ReplaceChannels(pending.pImpl->device);
+}
 
 void  SoundManager::UnMountAll() { pImpl->device.UnmountAll(); }
 float SoundManager::Volume() const { return pImpl->device.Volume(); }

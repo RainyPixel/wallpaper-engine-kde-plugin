@@ -7,16 +7,35 @@ import "../js/utils.mjs" as Utils
 Item {
     id: webItem
     anchors.fill: parent
-    property alias source: web.url
+    property url source
+    property bool scriptsReady: false
     property bool hasLib: background.hasLib
     property int fps: background.fps
     property var readfile
 
-    onFpsChanged: {
-        if(webobj.loaded) {
-            webobj.generalProperties.fps = webItem.fps;
-            webobj.sigGeneralProperties(webobj.sigGeneralProperties);
+    property string userPropsJson: background.userPropsJson
+    property var projectProperties: ({})
+
+    function sendUserProperties() {
+        if (!webobj.loaded) return;
+        const saved = Utils.parseJson(userPropsJson) || {};
+        const properties = {};
+        for (const key of Object.keys(projectProperties)) {
+            const property = projectProperties[key];
+            if (property && typeof property === "object" && "value" in property)
+                properties[key] = {value: Object.prototype.hasOwnProperty.call(saved, key)
+                    ? saved[key] : property.value};
         }
+        webobj.sigUserProperties(properties);
+    }
+
+    onUserPropsJsonChanged: sendUserProperties()
+    onFpsChanged: {
+        if (webobj.loaded) webobj.sigGeneralProperties({fps: webItem.fps});
+    }
+    onSourceChanged: {
+        webobj.loaded = false;
+        projectProperties = {};
     }
 
     Image {
@@ -32,19 +51,22 @@ Item {
         signal sigUserProperties(var properties)
         signal sigAudio(var audioArray)
         property bool loaded: false
-        property var userProperties 
-        property var generalProperties
         onLoadedChanged: {
-            if(!webobj.generalProperties)
-                webobj.generalProperties = {fps: 24};
-            webobj.sigGeneralProperties(webobj.generalProperties);
-            readfile(Common.urlNative(background.getWorkshopIDPath()) + "/project.json", function(text) { 
-                const json = Utils.parseJson(text);
-                webobj.userProperties = json.general.properties;
-                webobj.sigUserProperties(webobj.userProperties);
-            });
+            if (!loaded) return;
+            webobj.sigGeneralProperties({fps: webItem.fps});
+            const currentSource = String(webItem.source);
+            const projectUrl = background.getWorkshopIDPath() + "/project.json";
+            readfile(Common.urlNative(projectUrl)).then(text => {
+                if (!webobj.loaded || String(webItem.source) !== currentSource) return;
+                const project = Utils.parseJson(text);
+                const properties = project?.general?.properties;
+                webItem.projectProperties = properties && typeof properties === "object"
+                    && !Array.isArray(properties) ? properties : {};
+                webItem.sendUserProperties();
+            }).catch(error => console.error("Failed to load web properties: " + error));
         }
     }
+
     WebChannel {
         id: channel
         registeredObjects: [webobj]
@@ -54,6 +76,7 @@ Item {
     //WebView {
         id: web
         anchors.fill: parent
+        url: webItem.scriptsReady ? webItem.source : ""
         enabled: true
         audioMuted: background.mute
         activeFocusOnPress: false
@@ -78,6 +101,10 @@ Item {
         //    request.accepted = true;
         //}
         onLoadingChanged: (loadingInfo) => {
+            if (loadingInfo.status === WebEngineView.LoadStartedStatus) {
+                webobj.loaded = false;
+                webItem.projectProperties = {};
+            }
             if(loadingInfo.status == WebEngineView.LoadSucceededStatus) {
                 // check pause after load
                 if(paused) {
@@ -100,13 +127,14 @@ Item {
         }
 
         Component.onCompleted: {
+            // Load the resource before insertion; sourceUrl can race the first navigation.
+            readfile(":/qtwebchannel/qwebchannel.js").then(script => {
+                if (!script) throw new Error("Empty Qt WebChannel script");
+                installScripts(String(script));
+            }).catch(error => console.error("Failed to load Qt WebChannel script: " + error));
+        }
+        function installScripts(channelScript) {
             userScripts.insert([
-                {
-                    injectionPoint: WebEngineScript.DocumentCreation,
-                    worldId: WebEngineScript.MainWorld,
-                    name: "QWebChannel",
-                    sourceUrl: "qrc:///qtwebchannel/qwebchannel.js"
-                },
                 {
                     injectionPoint: WebEngineScript.DocumentCreation,
                     worldId: WebEngineScript.MainWorld,
@@ -124,7 +152,7 @@ Item {
                     worldId: WebEngineScript.MainWorld,
                     injectionPoint: WebEngineScript.Deferred,
                     name: "ObjectInjector",
-                    sourceCode: `
+                    sourceCode: channelScript + `
                         new QWebChannel(qt.webChannelTransport, function(channel) {
                             window.wpeQml = channel.objects.wpeQml;
                             const wpeQml = window.wpeQml;
@@ -143,6 +171,7 @@ Item {
                         `
                 }
             ])
+            webItem.scriptsReady = true;
             background.nowBackend = 'QtWebEngine';
         }
 

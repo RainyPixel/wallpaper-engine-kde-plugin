@@ -1,7 +1,7 @@
 import QtQuick 2.0
 import com.github.catsout.wallpaperEngineKde 1.2
 
-// FileHelper wrapper with Promise-like API for backwards compatibility
+// FileHelper wrapper retaining the asynchronous caller API
 Item {
     id: root
 
@@ -15,53 +15,44 @@ Item {
         id: fileHelper
     }
 
-    // Promise-like wrapper for synchronous calls
-    function _makePromise(value) {
-        return {
-            result: value,
-            then: function(callback) {
-                const res = callback(value);
-                // Return chainable promise
-                return _makePromise(res !== undefined ? res : value);
-            },
-            catch: function(callback) {
-                // No-op for synchronous calls (errors would throw immediately)
-                return _makePromise(value);
-            }
-        };
-    }
-
     function readfile(path) {
-        const data = fileHelper.readFile(path);
-        // Return as string (QML handles QByteArray to string conversion)
-        return _makePromise(data);
+        return new Promise(resolve => resolve(fileHelper.readFile(path)));
     }
 
     function get_dir_size(path, depth) {
-        if (depth === undefined) depth = 3;
-        const size = fileHelper.getDirSize(path, depth);
-        return _makePromise(size);
+        return new Promise(resolve => resolve(fileHelper.getDirSize(path, depth === undefined ? 3 : depth)));
     }
 
     function get_folder_list(path, opt) {
-        if (opt === undefined) opt = {};
-        const result = fileHelper.getFolderList(path, opt);
-        return _makePromise(result);
+        return new Promise(resolve => resolve(fileHelper.getFolderList(path, opt || {})));
     }
 
     function read_wallpaper_config(id) {
-        const config = fileHelper.readWallpaperConfig(id);
-        return _makePromise(config);
+        return new Promise(resolve => resolve(fileHelper.readWallpaperConfig(id)));
     }
 
-    function write_wallpaper_config(id, changed) {
-        fileHelper.writeWallpaperConfig(id, changed);
-        return _makePromise(null);
+    function write_wallpaper_config(id, changed, replaceExisting) {
+        return new Promise(resolve => {
+            if (!fileHelper.writeWallpaperConfig(id, changed, Boolean(replaceExisting))) {
+                notifySaveError("Failed to save wallpaper settings. Previous settings were kept.");
+                throw new Error("Failed to save wallpaper configuration");
+            }
+            resolve();
+        });
     }
 
     function reset_wallpaper_config(id) {
-        fileHelper.resetWallpaperConfig(id);
-        return _makePromise(null);
+        return new Promise(resolve => {
+            if (!fileHelper.resetWallpaperConfig(id)) {
+                notifySaveError("Failed to reset wallpaper settings. Previous settings were kept.");
+                throw new Error("Failed to reset wallpaper configuration");
+            }
+            resolve();
+        });
+    }
+
+    function notifySaveError(message) {
+        fileHelper.notifySaveError(message);
     }
 
     // No promise here, the callers bind the map straight into properties

@@ -239,7 +239,8 @@ bool FileHelper::writeWallpaperConfig(const QString& id, const QVariantMap& chan
         return false;
     }
     const QByteArray data = QJsonDocument(QJsonObject::fromVariantMap(config)).toJson();
-    if (file.write(data) != data.size()) {
+    // Older Qt versions can miss buffered flush failures inside commit().
+    if (file.write(data) != data.size() || ! file.flush()) {
         qWarning() << "FileHelper: Cannot write complete config:" << filePath << file.errorString();
         return false;
     }

@@ -56,7 +56,8 @@ bool GlobalConfigBackend::persist(const QVariantMap& data, QString& error) const
         return false;
     }
     const QByteArray bytes = QJsonDocument(QJsonObject::fromVariantMap(data)).toJson();
-    if (file.write(bytes) != bytes.size() || ! file.commit()) {
+    // Older Qt versions can miss buffered flush failures inside commit().
+    if (file.write(bytes) != bytes.size() || ! file.flush() || ! file.commit()) {
         error = file.errorString();
         return false;
     }

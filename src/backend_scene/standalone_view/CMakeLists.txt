@@ -37,8 +37,17 @@ target_link_libraries(${PROJECT_NAME}
         wescene-renderer
 )
 
+# End-to-end screenshot test. It needs a display, a Vulkan device and a scene,
+# so it reports SKIP unless WEKDE_E2E_ASSETS and WEKDE_E2E_SCENE are set.
+if(BUILD_TESTS)
+    enable_testing()
+    add_test(NAME viewer_screenshot_e2e
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/test_screenshot.sh $<TARGET_FILE:${PROJECT_NAME}>)
+    set_tests_properties(viewer_screenshot_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 if(BUILD_QML)
-    find_package(Qt${QT_MAJOR_VERSION} COMPONENTS Qml REQUIRED)
+    find_package(Qt6 COMPONENTS Qml REQUIRED)
 
     set(CMAKE_AUTOMOC ON) 
     set(CMAKE_AUTORCC ON) 

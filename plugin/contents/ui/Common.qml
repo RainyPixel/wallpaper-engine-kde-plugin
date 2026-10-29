@@ -27,7 +27,7 @@ QtObject {
         Mpv
     }
 
-    readonly property string version: '0.7.1'
+    readonly property string version: '0.8.0'
 
     readonly property string repo_url: 'https://github.com/RainyPixel/wallpaper-engine-kde-plugin'
 
@@ -213,6 +213,20 @@ QtObject {
     }
     function getGlobalConfigPath(steamLibrary) {
         return steamLibrary + "/steamapps/common/wallpaper_engine/config.json";
+    }
+    function getProjectDirectory(source, workshopid, projectDirs) {
+        const path = urlNative(String(source));
+        for (const dirs of projectDirs) {
+            for (const dir of (Array.isArray(dirs) ? dirs : [dirs])) {
+                const project = urlNative(String(dir)).replace(/\/$/, "") + "/" + workshopid;
+                if (path.startsWith(project + "/")) return localFileUrl(project);
+            }
+        }
+        // Custom projects can live outside the detected Steam libraries.
+        const marker = "/" + workshopid + "/";
+        const index = workshopid ? path.lastIndexOf(marker) : -1;
+        return localFileUrl(index >= 0 ? path.slice(0, index + marker.length - 1)
+                                      : path.slice(0, path.lastIndexOf('/')));
     }
     function getWorkshopUrl(workshopid) {
         return "https://steamcommunity.com/sharedfiles/filedetails/?id=" + workshopid;

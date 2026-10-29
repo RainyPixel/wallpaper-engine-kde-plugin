@@ -1,0 +1,9 @@
+{
+    "camera": {"center": "32 32 0", "eye": "32 32 1", "up": "0 1 0"},
+    "general": {
+        "clearcolor": "1 0 0",
+        "cameraparallax": false,
+        "orthogonalprojection": {"width": 64, "height": 64}
+    },
+    "objects": []
+}

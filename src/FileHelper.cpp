@@ -1,6 +1,10 @@
 #include "FileHelper.hpp"
 #include "SteamPaths.hpp"
 #include <QFile>
+#include <QSaveFile>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCall>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -16,6 +20,22 @@ namespace wekde
 
 namespace
 {
+
+bool readConfigFile(const QString& path, QVariantMap& config) {
+    QFile file(path);
+    if (! file.exists()) return true;
+    if (! file.open(QIODevice::ReadOnly)) {
+        qWarning() << "FileHelper: Cannot read config:" << path << file.errorString();
+        return false;
+    }
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (file.error() != QFileDevice::NoError || ! doc.isObject()) {
+        qWarning() << "FileHelper: Invalid or unreadable config:" << path;
+        return false;
+    }
+    config = doc.object().toVariantMap();
+    return true;
+}
 
 QVariantMap packLibraries(const QList<steam::Library>& libraries,
                           const QString&               configuredLibrary) {
@@ -198,51 +218,66 @@ QVariantMap FileHelper::detectSteamIn(const QStringList& steamRoots,
 }
 
 QVariantMap FileHelper::readWallpaperConfig(const QString& id) {
-    QString filePath = wallpaperConfigFile(id);
-    QFile   file(filePath);
-
-    if (! file.exists()) {
-        return QVariantMap();
-    }
-
-    if (! file.open(QIODevice::ReadOnly)) {
-        qWarning() << "FileHelper: Cannot read config:" << filePath;
-        return QVariantMap();
-    }
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (doc.isNull() || ! doc.isObject()) {
-        return QVariantMap();
-    }
-
-    return doc.object().toVariantMap();
+    QVariantMap config;
+    readConfigFile(wallpaperConfigFile(id), config);
+    return config;
 }
 
-void FileHelper::writeWallpaperConfig(const QString& id, const QVariantMap& changed) {
-    // Read existing config
-    QVariantMap config = readWallpaperConfig(id);
+bool FileHelper::writeWallpaperConfig(const QString& id, const QVariantMap& changed,
+                                      bool replaceExisting) {
+    const QString filePath = wallpaperConfigFile(id);
+    QVariantMap   config;
+    if (! replaceExisting && ! readConfigFile(filePath, config)) return false;
 
-    // Merge changes
     for (auto it = changed.constBegin(); it != changed.constEnd(); ++it) {
         config[it.key()] = it.value();
     }
 
-    // Write back
-    QString filePath = wallpaperConfigFile(id);
-    QFile   file(filePath);
-
+    QSaveFile file(filePath);
     if (! file.open(QIODevice::WriteOnly)) {
-        qWarning() << "FileHelper: Cannot write config:" << filePath;
-        return;
+        qWarning() << "FileHelper: Cannot write config:" << filePath << file.errorString();
+        return false;
     }
-
-    QJsonDocument doc(QJsonObject::fromVariantMap(config));
-    file.write(doc.toJson());
+    const QByteArray data = QJsonDocument(QJsonObject::fromVariantMap(config)).toJson();
+    // Older Qt versions can miss buffered flush failures inside commit().
+    if (file.write(data) != data.size() || ! file.flush()) {
+        qWarning() << "FileHelper: Cannot write complete config:" << filePath << file.errorString();
+        return false;
+    }
+    if (! file.commit()) {
+        qWarning() << "FileHelper: Cannot commit config:" << filePath << file.errorString();
+        return false;
+    }
+    return true;
 }
 
-void FileHelper::resetWallpaperConfig(const QString& id) {
-    QString filePath = wallpaperConfigFile(id);
-    QFile::remove(filePath);
+bool FileHelper::resetWallpaperConfig(const QString& id) {
+    QFile file(wallpaperConfigFile(id));
+    if (! file.exists()) return true;
+    if (file.remove()) return true;
+    qWarning() << "FileHelper: Cannot reset config:" << file.fileName() << file.errorString();
+    return false;
+}
+
+void FileHelper::notifySaveError(const QString& message) {
+    const auto bus = QDBusConnection::sessionBus();
+    if (! bus.isConnected()) {
+        qWarning() << "FileHelper: Notification session bus is unavailable";
+        return;
+    }
+    auto call = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.Notifications"),
+                                               QStringLiteral("/org/freedesktop/Notifications"),
+                                               QStringLiteral("org.freedesktop.Notifications"),
+                                               QStringLiteral("Notify"));
+    call.setArguments({ QStringLiteral("Wallpaper Engine KDE"),
+                        uint(0),
+                        QStringLiteral("dialog-error"),
+                        tr("Wallpaper settings could not be saved"),
+                        message,
+                        QStringList(),
+                        QVariantMap(),
+                        -1 });
+    bus.asyncCall(call);
 }
 
 } // namespace wekde

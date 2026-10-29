@@ -7,6 +7,8 @@
 #include "Utils/Logging.h"
 #include "Utils/AutoDeletor.hpp"
 #include "Resource.hpp"
+#include "VideoTexture.hpp"
+#include "Fs/VFS.h"
 #include "PassCommon.hpp"
 #include "PassCache.hpp"
 #include "Interface/IImageParser.h"
@@ -108,6 +110,7 @@ static void UpdateUniform(StagingBuffer* buf, const StagingBufferRef& bufref,
 }
 
 void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingResources& rr) {
+    m_samples_video = false;
     m_desc.vk_textures.resize(m_desc.textures.size());
     for (usize i = 0; i < m_desc.textures.size(); i++) {
         auto& tex_name = m_desc.textures[i];
@@ -122,10 +125,19 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
             img_slots.slots = { opt.value() };
         } else {
             auto image = scene.imageParser->Parse(tex_name);
-            if (image) {
+            if (image && image->header.video && rr.videos != nullptr && scene.vfs) {
+                // Video texture: sample the decoded frames. The pass then
+                // changes every frame and must never be cached as static.
+                if (auto* live = rr.videos->Acquire(
+                        tex_name, *scene.vfs, *image->header.video, image->header.sample)) {
+                    img_slots       = *live;
+                    m_samples_video = true;
+                }
+            }
+            if (image && img_slots.slots.empty()) {
                 img_slots =
                     device.asset_cache().CreateTexShared(*image, rr.screen_token, scene.scene_id);
-            } else {
+            } else if (! image) {
                 LOG_ERROR("parse tex \"%s\" failed", tex_name.c_str());
             }
         }
@@ -199,7 +211,7 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
     // same name (effect ping-pong copy, later composite) overwrites the one
     // GPU image; skipping the producer then leaves the base layer black.
     {
-        bool inputs_static = true;
+        bool inputs_static = ! m_samples_video;
         for (auto& in_name : m_desc.textures) {
             if (in_name.empty()) continue;
             if (IsSpecTex(in_name)) {

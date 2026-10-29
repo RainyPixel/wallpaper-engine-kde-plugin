@@ -21,6 +21,9 @@ struct RenderInitInfo {
     bool offscreen { false };
     bool share_gpu { true };
     bool mirror_scene { false };
+    // Debug: create the swapchain so frames can be read back (see
+    // PROPERTY_SCREENSHOT). Off by default; ordinary swapchains are unchanged.
+    bool enable_readback { false };
 
     std::span<const std::uint8_t> uuid;
     TexTiling                     offscreen_tiling { TexTiling::OPTIMAL };

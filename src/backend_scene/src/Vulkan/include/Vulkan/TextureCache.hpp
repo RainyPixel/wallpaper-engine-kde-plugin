@@ -20,9 +20,14 @@ namespace vulkan
 // asset texture.
 using ScreenToken = std::uint64_t;
 
-VkFormat             ToVkType(TextureFormat);
-VkSamplerAddressMode ToVkType(TextureWrap);
-VkFilter             ToVkType(TextureFilter);
+VkFormat ToVkType(TextureFormat);
+// 2D image with view and sampler; used for asset and video textures.
+std::optional<VmaImageParameters> CreateImage(const Device&, VkExtent3D extent, u32 miplevel,
+                                              VkFormat format, VkSamplerCreateInfo sampler_info,
+                                              VkImageUsageFlags usage,
+                                              VmaMemoryUsage mem_usage = VMA_MEMORY_USAGE_GPU_ONLY);
+VkSamplerAddressMode              ToVkType(TextureWrap);
+VkFilter                          ToVkType(TextureFilter);
 
 enum class TexUsage
 {

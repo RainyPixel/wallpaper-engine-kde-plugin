@@ -251,6 +251,9 @@ uint GlExtra::genExTexture(ExHandle& handle) {
 
     glTexStorageMem2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, handle.width, handle.height, memobject, 0);
     CHECK_GL_ERROR_IF_DEBUG()
+    // Texture storage retains the imported memory after its object name is deleted.
+    glDeleteMemoryObjectsEXT(1, &memobject);
+    CHECK_GL_ERROR_IF_DEBUG()
 
     glBindTexture(GL_TEXTURE_2D, 0);
 

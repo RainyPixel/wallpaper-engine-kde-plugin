@@ -7,6 +7,7 @@
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QOpenGLContext>
+#include <QtGui/QOpenGLFunctions>
 #include <QtQuick/QQuickWindow>
 
 #include <QtGui/QOffscreenSurface>
@@ -99,12 +100,8 @@ public:
         // state. The texture node IS destroyed on teardown, so stop and join the
         // render loop here before this node and its resources go away.
         m_scene->stopRender();
-        for (auto& item : texs_map) {
-            auto& exh = item.second;
-            // close(exh.fd);
-            m_glex.deleteTexture(exh.gltex);
-            delete exh.qsg;
-        }
+        clearImports();
+        m_frame_source.reset();
         delete m_init_texture;
         emit nodeDestroyed();
         _Q_INFO("Destroy texnode", "");
@@ -152,9 +149,17 @@ public slots:
         auto swapchain = m_scene->currentSwapchain();
         if (! swapchain) return;
 
-        wallpaper::ExHandle* exh = swapchain->eatFrame(m_last_frame_id);
+        const bool           source_changed = swapchain != m_frame_source;
+        auto                 last_frame_id  = source_changed ? 0 : m_last_frame_id;
+        wallpaper::ExHandle* exh            = swapchain->eatFrame(last_frame_id);
         if (exh != nullptr) {
-            int id = exh->id();
+            if (source_changed) {
+                // IDs and publication counters are local to each frame source.
+                clearImports();
+                m_frame_source = std::move(swapchain);
+            }
+            m_last_frame_id = last_frame_id;
+            int id          = exh->id();
             if (texs_map.count(id) == 0) {
                 _Q_INFO("receive external texture(%dx%d) from fd: %d",
                         exh->width,
@@ -185,17 +190,32 @@ public slots:
     }
 
 private:
+    void clearImports() {
+        m_texture = m_init_texture;
+        setTexture(m_texture);
+        markDirty(DirtyMaterial);
+        auto* context = QOpenGLContext::currentContext();
+        // Vulkan can free these allocations once their source owner is released.
+        if (context && ! texs_map.empty()) context->functions()->glFinish();
+        for (auto& [id, texture] : texs_map) {
+            delete texture.qsg;
+            if (context) m_glex.deleteTexture(texture.gltex);
+        }
+        texs_map.clear();
+    }
+
     sp_scene_t m_scene;
     bool       m_enable_valid;
     bool       m_share_gpu;
     bool       m_mirror_scene;
 
-    QSGTexture*       m_init_texture;
-    QSGTexture*       m_texture;
-    EatFrameOp        m_eatFrameOp;
-    QQuickWindow*     m_window;
-    std::atomic<bool> m_first_frame;
-    std::uint64_t     m_last_frame_id { 0 };
+    QSGTexture*                             m_init_texture;
+    QSGTexture*                             m_texture;
+    EatFrameOp                              m_eatFrameOp;
+    QQuickWindow*                           m_window;
+    std::atomic<bool>                       m_first_frame;
+    std::uint64_t                           m_last_frame_id { 0 };
+    std::shared_ptr<wallpaper::ExSwapchain> m_frame_source;
 
     GlExtra m_glex;
 

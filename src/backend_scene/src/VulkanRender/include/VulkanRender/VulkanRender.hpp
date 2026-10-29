@@ -6,6 +6,7 @@
 #include "Type.hpp"
 
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -56,6 +57,16 @@ public:
     // from the QML render thread when the texture node is destroyed, so the render
     // loop never emits into a half-destroyed node during teardown.
     void clearRedrawCallback();
+
+    // Debug: write the next presented frame as a binary PPM to `path`.
+    //
+    // Needs a window swapchain created with RenderInitInfo::enable_readback.
+    // `done` runs exactly once on the render thread: ok=true with the written
+    // path once the file is complete, or ok=false with the reason (readback not
+    // enabled or unsupported by the surface, offscreen renderer, unsupported
+    // format, I/O error, renderer destroyed, request superseded).
+    void requestScreenshot(std::string                                             path,
+                           std::function<void(bool ok, const std::string& detail)> done);
 
 private:
     struct Impl;

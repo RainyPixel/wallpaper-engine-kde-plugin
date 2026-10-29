@@ -16,7 +16,7 @@ public:
 
     QUrl cache_path() const;
 
-    QString version() const { return "0.7.1"; };
+    QString version() const { return "0.8.0"; };
 
 protected:
 signals:

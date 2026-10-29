@@ -1,5 +1,7 @@
 #include "WPTexImageParser.hpp"
 
+#include <optional>
+
 #include "Type.hpp"
 #include "WPCommon.hpp"
 #include <cstdint>
@@ -123,6 +125,28 @@ void SetHeaderPow2(ImageHeader& header, i32 mip_0_w, i32 mip_0_h) {
     header.mipmap_larger = mip_0_w * mip_0_h > header.mapWidth * header.mapHeight;
 }
 
+// A video texture stores its MP4/WebM container as the payload of its single
+// mip. Walk the same image/mip layout the pixel loader reads and return where
+// that payload sits, without reading it. `file` must be positioned right after
+// LoadHeader().
+std::optional<EmbeddedVideo> LocateVideoPayload(fs::IBinaryStream& file, ImageHeader& header,
+                                                const std::string& path) {
+    if (header.count < 1) return std::nullopt;
+    if (file.ReadInt32() < 1) return std::nullopt; // mip count
+    const i32 width  = file.ReadInt32();
+    const i32 height = file.ReadInt32();
+    if (header.extraHeader["texb"].val > 1) {
+        const bool lz4 = file.ReadInt32() == 1;
+        file.ReadInt32();             // decompressed size
+        if (lz4) return std::nullopt; // never seen for video; would need inflating first
+    }
+    const i32 size = file.ReadInt32();
+    const idx at   = file.Tell();
+    if (width <= 0 || height <= 0 || size <= 0 || at < 0 || (isize)at + size > file.Size())
+        return std::nullopt;
+    return EmbeddedVideo { .path = path, .offset = (i64)at, .size = (i64)size };
+}
+
 constexpr std::string_view ALIAS_PREFIX = "_alias_";
 
 inline bool IsAliasTexture(const std::string& name) {
@@ -183,9 +207,20 @@ std::shared_ptr<Image> WPTexImageParser::Parse(const std::string& name) {
     LoadHeader(file, img.header);
 
     if (img.header.extraHeader["video"].val) {
-        LOG_INFO("tex \"%s\" contains unsupported video; using transparent fallback", name.c_str());
+        // The renderer decodes the video when it can; this transparent 1x1
+        // image is what the layer shows whenever it cannot.
         auto fallback = MakeFallbackImage(name);
         std::fill_n(fallback->slots[0].mipmaps[0].data.get(), 4, (uint8_t)0);
+        fallback->header.sample = img.header.sample;
+        if (auto video = LocateVideoPayload(file, img.header, path); video.has_value()) {
+            LOG_INFO(
+                "tex \"%s\" is a video texture (%lld bytes)", name.c_str(), (long long)video->size);
+            fallback->header.video = std::move(video);
+        } else {
+            LOG_ERROR("tex \"%s\" is flagged as video but its payload could not be located; "
+                      "using transparent fallback",
+                      name.c_str());
+        }
         return fallback;
     }
 

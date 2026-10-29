@@ -1,6 +1,7 @@
 #include "FrameTimer.hpp"
 #include "Utils//Logging.h"
 
+#include <algorithm>
 #include <numeric>
 
 using namespace wallpaper;
@@ -45,7 +46,7 @@ void FrameTimer::UpdateFrametime() {
 }
 
 void FrameTimer::SetRequiredFps(u16 value) {
-    m_req_fps             = value;
+    m_req_fps             = std::clamp<u16>(value, 1, 1000);
     microseconds ideatime = milliseconds(1000 / m_req_fps);
     m_ideatime            = ideatime;
     for (usize i = 0; i < FrameTimer::FRAMETIME_QUEUE_SIZE; i++) {

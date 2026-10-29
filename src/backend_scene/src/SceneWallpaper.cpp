@@ -6,7 +6,7 @@
 
 #include "Timer/FrameTimer.hpp"
 #include "Utils/FpsCounter.h"
-#include "WPSceneParser.hpp"
+#include "SceneLoader.hpp"
 #include "Scene/Scene.h"
 #include "Particle/ParticleSystem.h"
 #include "Interface/IShaderValueUpdater.h"
@@ -22,8 +22,11 @@
 
 #include "VulkanRender/SceneToRenderGraph.hpp"
 #include "VulkanRender/VulkanRender.hpp"
+#include <algorithm>
 #include <atomic>
 #include <sstream>
+#include <mutex>
+#include <vector>
 
 using namespace wallpaper;
 
@@ -70,6 +73,17 @@ namespace wallpaper
 {
 class RenderHandler;
 
+struct ScreenshotCompletion {
+    std::atomic<bool>                             completed { false };
+    std::function<void(bool, const std::string&)> done;
+    void                                          Complete(bool ok, const std::string& detail) {
+        if (! completed.exchange(true)) {
+            auto callback = std::move(done);
+            if (callback) callback(ok, detail);
+        }
+    }
+};
+
 class MainHandler : public looper::Handler {
 public:
     enum class CMD
@@ -90,6 +104,7 @@ public:
     // call more than once. Called from the texture node teardown because at
     // plasmashell exit the SceneObject (and thus this handler) is never destroyed.
     void stopRender();
+    void submitScreenshot(const std::shared_ptr<ScreenshotRequest>&);
 
     bool init();
     auto renderHandler() const { return m_render_handler; }
@@ -112,8 +127,6 @@ public:
 
     void               sendCmdLoadScene();
     void               sendFirstFrameOk();
-    bool               isGenGraphviz() const { return m_gen_graphviz; }
-    bool               cachePasses() const { return m_cache_passes; }
     const std::string& userProps() const { return m_user_props_json; }
 
 private:
@@ -125,15 +138,18 @@ private:
     MHANDLER_CMD(FIRST_FRAME);
 
 private:
-    bool m_inited { false };
+    bool                                               m_inited { false };
+    std::mutex                                         m_screenshot_mutex;
+    bool                                               m_screenshots_stopped { false };
+    std::vector<std::shared_ptr<ScreenshotCompletion>> m_screenshots;
 
     std::string m_assets;
     std::string m_source;
     std::string m_cache_path;
     bool        m_gen_graphviz { false };
     bool        m_cache_passes { true };
+    bool        m_paused { false };
 
-    WPSceneParser                        m_scene_parser;
     std::unique_ptr<audio::SoundManager> m_sound_manager;
     FirstFrameCallback                   m_first_frame_callback;
     std::string                          m_user_props_json;
@@ -154,6 +170,8 @@ public:
         CMD_SET_SCENE,
         CMD_SET_FILLMODE,
         CMD_SET_SPEED,
+        CMD_SET_FPS,
+        CMD_SCREENSHOT,
         CMD_STOP,
         CMD_DRAW,
         CMD_NO
@@ -177,6 +195,8 @@ public:
                 CASE_CMD(SET_FILLMODE);
                 CASE_CMD(SET_SCENE);
                 CASE_CMD(SET_SPEED);
+                CASE_CMD(SET_FPS);
+                CASE_CMD(SCREENSHOT);
                 CASE_CMD(INIT_VULKAN);
             default: break;
             }
@@ -201,7 +221,7 @@ private:
         if (! m_scene) return {};
         std::ostringstream os;
         os << m_uuid_hex << '|' << m_scene->scene_id << '|' << m_width << 'x' << m_height << '|'
-           << (int)m_fillmode << '|' << m_speed << '|' << main_handler.userProps();
+           << (int)m_fillmode << '|' << m_speed << '|' << m_scene->user_props_json;
         return os.str();
     }
 
@@ -316,15 +336,22 @@ private:
             m_render->releaseMirror();
             if (m_rg) m_render->clearLastRenderGraph();
 
-            m_scene               = std::move(scene);
-            m_scene->cache_passes = main_handler.cachePasses();
-            m_rg                  = sceneToRenderGraph(*m_scene);
+            m_scene = std::move(scene);
+            m_rg    = sceneToRenderGraph(*m_scene);
 
-            if (main_handler.isGenGraphviz()) m_rg->ToGraphviz("graph.dot");
+            bool graphviz = false;
+            msg->findBool("graphviz", &graphviz);
+            if (graphviz) m_rg->ToGraphviz("graph.dot");
             m_render->compileRenderGraph(*m_scene, *m_rg);
             m_render->UpdateCameraFillMode(*m_scene, m_fillmode);
 
             decideFrameSource();
+        }
+    }
+    MHANDLER_CMD(SET_FPS) {
+        int32_t fps;
+        if (msg->findInt32("value", &fps)) {
+            frame_timer.SetRequiredFps(static_cast<u16>(std::clamp(fps, 5, 1000)));
         }
     }
     MHANDLER_CMD(SET_SPEED) {
@@ -333,6 +360,20 @@ private:
             m_speed = v;
             onMirrorKeyChanged();
         }
+    }
+    MHANDLER_CMD(SCREENSHOT) {
+        std::shared_ptr<ScreenshotRequest> req;
+        if (! msg->findObject("value", &req) || ! req) return;
+        auto done = req->done;
+        if (req->path.empty()) {
+            if (done) done(false, "empty screenshot path");
+            return;
+        }
+        if (! m_render->inited()) {
+            if (done) done(false, "renderer is not initialised");
+            return;
+        }
+        m_render->requestScreenshot(req->path, std::move(done));
     }
     MHANDLER_CMD(INIT_VULKAN) {
         std::shared_ptr<RenderInitInfo> info;
@@ -371,7 +412,39 @@ private:
                                                                  (float)SCENE_POINTER_CENTER } };
 };
 
+void MainHandler::submitScreenshot(const std::shared_ptr<ScreenshotRequest>& request) {
+    if (! request) return;
+    auto completion  = std::make_shared<ScreenshotCompletion>();
+    completion->done = request->done;
+    auto queued      = std::make_shared<ScreenshotRequest>();
+    queued->path     = request->path;
+    queued->done     = [completion](bool ok, const std::string& detail) {
+        completion->Complete(ok, detail);
+    };
+    bool posted = false;
+    {
+        std::lock_guard lock(m_screenshot_mutex);
+        if (! m_screenshots_stopped) {
+            std::erase_if(m_screenshots, [](const auto& shot) {
+                return shot->completed.load();
+            });
+            m_screenshots.push_back(completion);
+            auto msg = CreateMsgWithCmd(shared_from_this(), CMD::CMD_SET_PROPERTY);
+            msg->setString("property", std::string(PROPERTY_SCREENSHOT));
+            msg->setObject("value", queued);
+            posted = msg->post() == looper::status_t::OK;
+        }
+    }
+    if (! posted) completion->Complete(false, "renderer is stopped or not initialised");
+}
+
 void MainHandler::stopRender() {
+    std::vector<std::shared_ptr<ScreenshotCompletion>> pending;
+    {
+        std::lock_guard lock(m_screenshot_mutex);
+        m_screenshots_stopped = true;
+        pending.swap(m_screenshots);
+    }
     if (m_render_handler) {
         m_render_handler->stopRendering();
         m_render_handler->clearRedrawCallback();
@@ -381,9 +454,14 @@ void MainHandler::stopRender() {
     // After the loops are joined (no render thread left), drop any mirror-group
     // membership so a primary leaving lets the remaining screens re-elect.
     if (m_render_handler) m_render_handler->releaseMirrorGroup();
+    for (const auto& shot : pending) shot->Complete(false, "renderer stopped before screenshot");
 }
 
-MainHandler::~MainHandler() { stopRender(); }
+MainHandler::~MainHandler() {
+    stopRender();
+    // Streams reference the scene VFS, which the render handler owns.
+    m_sound_manager->UnMountAll();
+}
 } // namespace wallpaper
 
 SceneWallpaper::SceneWallpaper(): m_main_handler(std::make_shared<MainHandler>()) {}
@@ -441,7 +519,16 @@ BASIC_TYPE(Bool, bool);
 BASIC_TYPE(Int32, int32_t);
 BASIC_TYPE(Float, float);
 BASIC_TYPE(String, std::string);
-BASIC_TYPE(Object, std::shared_ptr<void>);
+void SceneWallpaper::setPropertyObject(std::string_view name, std::shared_ptr<void> value) {
+    if (name == PROPERTY_SCREENSHOT) {
+        m_main_handler->submitScreenshot(std::static_pointer_cast<ScreenshotRequest>(value));
+        return;
+    }
+    auto msg = CreateMsgWithCmd(m_main_handler, MainHandler::CMD::CMD_SET_PROPERTY);
+    msg->setString("property", std::string(name));
+    msg->setObject("value", value);
+    msg->post();
+}
 
 ExSwapchain* SceneWallpaper::exSwapchain() const {
     return m_main_handler->renderHandler()->exSwapchain();
@@ -469,17 +556,17 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
         if (property == PROPERTY_SOURCE) {
             msg->findString("value", &m_source);
             LOG_INFO("source: %s", m_source.c_str());
-            // Reset user properties when source changes (new wallpaper)
-            m_user_props_json.clear();
+            // Source and user properties are independent; the caller selects the overrides.
             CALL_MHANDLER_CMD(LOAD_SCENE, msg);
         } else if (property == PROPERTY_ASSETS) {
             msg->findString("value", &m_assets);
             CALL_MHANDLER_CMD(LOAD_SCENE, msg);
         } else if (property == PROPERTY_FPS) {
             int32_t fps { 15 };
-            msg->findInt32("value", &fps);
-            if (fps >= 5) {
-                m_render_handler->frame_timer.SetRequiredFps((uint8_t)fps);
+            if (msg->findInt32("value", &fps) && fps >= 5) {
+                auto nmsg = CreateMsgWithCmd(m_render_handler, RenderHandler::CMD::CMD_SET_FPS);
+                nmsg->setInt32("value", fps);
+                nmsg->post();
             }
         } else if (property == PROPERTY_FILLMODE) {
             int32_t value;
@@ -514,14 +601,19 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
                 nmsg->setFloat("value", speed);
                 nmsg->post();
             }
+        } else if (property == PROPERTY_SCREENSHOT) {
+            std::shared_ptr<ScreenshotRequest> req;
+            if (msg->findObject("value", &req) && req) {
+                auto nmsg = CreateMsgWithCmd(m_render_handler, RenderHandler::CMD::CMD_SCREENSHOT);
+                nmsg->setObject("value", req);
+                nmsg->post();
+            }
         } else if (property == PROPERTY_USER_PROPS) {
             std::string json;
             msg->findString("value", &json);
             if (m_user_props_json != json) {
                 m_user_props_json = json;
-                // Reload scene to apply new user properties (only if we have actual properties)
-                // Skip reload if json is empty - this means wallpaper is changing
-                if (! json.empty() && ! m_source.empty() && ! m_assets.empty()) {
+                if (! m_source.empty() && ! m_assets.empty()) {
                     LOG_INFO("Reloading scene to apply user properties: %s", json.c_str());
                     CALL_MHANDLER_CMD(LOAD_SCENE, msg);
                 }
@@ -543,6 +635,7 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
 MHANDLER_CMD_IMPL(MainHandler, STOP) {
     bool stop { false };
     if (msg->findBool("value", &stop)) {
+        m_paused = stop;
         if (stop) {
             m_sound_manager->Pause();
         } else {
@@ -564,73 +657,18 @@ void MainHandler::loadScene() {
 
     LOG_INFO("loading scene: %s", m_source.c_str());
 
+    auto scene = LoadScene(m_source, m_assets, m_cache_path, *m_sound_manager, m_user_props_json);
+    if (! scene) return;
     if (! m_sound_manager->IsInited()) {
         m_sound_manager->Init();
-        m_sound_manager->Play();
-    } else {
-        m_sound_manager->UnMountAll();
-    }
-
-    std::shared_ptr<Scene> scene { nullptr };
-
-    // mount assets dir
-    std::unique_ptr<fs::VFS> pVfs = std::make_unique<fs::VFS>();
-    auto&                    vfs  = *pVfs;
-    if (! vfs.IsMounted("assets")) {
-        bool sus = vfs.Mount("/assets", fs::CreatePhysicalFs(m_assets), "assets");
-        if (! sus) {
-            LOG_ERROR("Mount assets dir failed");
-            return;
-        }
-    }
-    std::filesystem::path pkgPath_fs { m_source };
-    pkgPath_fs.replace_extension("pkg");
-    std::string pkgPath  = pkgPath_fs.native();
-    std::string pkgEntry = pkgPath_fs.filename().replace_extension("json").native();
-    std::string pkgDir   = pkgPath_fs.parent_path().native();
-    std::string scene_id = pkgPath_fs.parent_path().filename().native();
-
-    // Workshop metadata lives beside scene.pkg, outside its asset namespace.
-    vfs.Mount("/project", fs::CreatePhysicalFs(pkgDir));
-
-    // load pkgfile
-    if (! vfs.Mount("/assets", fs::WPPkgFs::CreatePkgFs(pkgPath))) {
-        LOG_INFO("load pkg file %s failed, fallback to use dir", pkgPath.c_str());
-        // load pkg dir
-        if (! vfs.Mount("/assets", fs::CreatePhysicalFs(pkgDir))) {
-            LOG_ERROR("can't load pkg directory: %s", pkgDir.c_str());
-            return;
-        }
-    }
-    if (! m_cache_path.empty()) {
-        if (! vfs.Mount("/cache", fs::CreatePhysicalFs(m_cache_path, true), "cache")) {
-            LOG_ERROR("can't load cache folder: %s", m_cache_path.c_str());
-        } else {
-            LOG_INFO("cache folder: %s", m_cache_path.c_str());
-        }
+        if (m_paused) m_sound_manager->Pause();
     }
 
     {
-        std::string       scene_src;
-        const std::string base { "/assets/" };
-        {
-            std::string scenePath = base + pkgEntry;
-            if (vfs.Contains(scenePath)) {
-                auto f = vfs.Open(scenePath);
-                if (f) scene_src = f->ReadAllStr();
-            }
-        }
-        if (scene_src.empty()) {
-            LOG_ERROR("Not supported scene type");
-            return;
-        }
-        scene = m_scene_parser.Parse(scene_id, scene_src, vfs, *m_sound_manager, m_user_props_json);
-        scene->vfs.swap(pVfs);
-    }
-
-    {
-        auto msg = CreateMsgWithCmd(m_render_handler, RenderHandler::CMD::CMD_SET_SCENE);
+        scene->cache_passes = m_cache_passes;
+        auto msg            = CreateMsgWithCmd(m_render_handler, RenderHandler::CMD::CMD_SET_SCENE);
         msg->setObject("scene", scene);
+        msg->setBool("graphviz", m_gen_graphviz);
         msg->post();
     }
 
@@ -666,7 +704,6 @@ bool MainHandler::init() {
         frameTimer.SetCallback([msg]() {
             msg->post();
         });
-        frameTimer.SetRequiredFps(15);
         frameTimer.Run();
     }
 

@@ -34,8 +34,10 @@ public:
 
     // Wallpaper config operations
     Q_INVOKABLE QVariantMap readWallpaperConfig(const QString& id);
-    Q_INVOKABLE void        writeWallpaperConfig(const QString& id, const QVariantMap& changed);
-    Q_INVOKABLE void        resetWallpaperConfig(const QString& id);
+    Q_INVOKABLE bool        writeWallpaperConfig(const QString& id, const QVariantMap& changed,
+                                                 bool replaceExisting = false);
+    Q_INVOKABLE bool        resetWallpaperConfig(const QString& id);
+    Q_INVOKABLE void        notifySaveError(const QString& message);
 
 private:
     QString configDir() const;

@@ -28,6 +28,22 @@ add_subdirectory(Scene)
 add_subdirectory(Looper)
 add_subdirectory(Vulkan)
 add_subdirectory(Particle)
+
+# Video textures (MP4/WebM stored inside a .tex) are decoded with FFmpeg when
+# its development files are available; otherwise those layers stay transparent.
+option(WEKDE_VIDEO_TEXTURES "Decode Wallpaper Engine video textures with FFmpeg" ON)
+if(WEKDE_VIDEO_TEXTURES)
+  pkg_check_modules(WEKDE_FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec
+                    libswscale libavutil)
+endif()
+if(WEKDE_VIDEO_TEXTURES AND WEKDE_FFMPEG_FOUND)
+  message(STATUS "Video textures: enabled (libavcodec ${WEKDE_FFMPEG_libavcodec_VERSION})")
+  add_subdirectory(Video)
+else()
+  message(STATUS "Video textures: disabled (WEKDE_VIDEO_TEXTURES=OFF or FFmpeg development "
+                 "files not found); such layers stay transparent")
+endif()
+
 add_subdirectory(VulkanRender)
 add_subdirectory(RenderGraph)
 
@@ -49,6 +65,7 @@ add_library(
   WPSoundParser.cpp
   WPMdlParser.cpp
   WPPuppet.cpp
+  SceneLoader.cpp
   SceneWallpaper.cpp)
 
 set(InteralLib

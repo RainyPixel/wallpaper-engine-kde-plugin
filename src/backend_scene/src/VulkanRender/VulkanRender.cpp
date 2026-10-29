@@ -6,6 +6,7 @@
 #include "Interface/IShaderValueUpdater.h"
 
 #include "Utils/Algorism.h"
+#include "Utils/PpmWriter.hpp"
 #include "OrthoCamera.hpp"
 
 #include <cstdlib>
@@ -22,6 +23,7 @@
 #include "PrePass.hpp"
 #include "FinPass.hpp"
 #include "Resource.hpp"
+#include "VideoTexture.hpp"
 
 #include "Core/ArrayHelper.hpp"
 
@@ -29,6 +31,10 @@
 #include <vector>
 #include <cstdint>
 #include <atomic>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <string>
 
 #if ENABLE_RENDERDOC_API
 #    include "RenderDoc.h"
@@ -99,8 +105,11 @@ struct VulkanRender::Impl {
     // Per-screen command pool, render-target pool, output extent and token.
     vvk::CommandPool              m_cmd_pool;
     std::unique_ptr<TextureCache> m_rt_pool;
-    VkExtent2D                    m_out_extent { 1, 1 };
-    ScreenToken                   m_token { 0 };
+    // live video textures of the current graph (see VideoTexture.hpp)
+    std::unique_ptr<VideoTextures> m_videos;
+    double                         m_scene_time { 0.0 };
+    VkExtent2D                     m_out_extent { 1, 1 };
+    ScreenToken                    m_token { 0 };
 
     std::unique_ptr<PrePass> m_prepass { nullptr };
     std::unique_ptr<FinPass> m_finpass { nullptr };
@@ -119,6 +128,28 @@ struct VulkanRender::Impl {
     bool m_with_surface { false };
     bool m_inited { false };
     bool m_pass_loaded { false };
+
+    // Pending frame dump (see requestScreenshot). Served by the next swapchain
+    // frame; `done` is always invoked exactly once.
+    struct ShotRequest {
+        std::string                                             path;
+        std::function<void(bool ok, const std::string& detail)> done;
+    };
+    // Host-visible copy of one presented image, filled inside the frame's own
+    // command buffer.
+    struct ShotReadback {
+        VmaBufferParameters buf;
+        VkExtent2D          extent {};
+        utils::PixelOrder   order { utils::PixelOrder::RGBA };
+    };
+    std::mutex                 m_shot_mtx;
+    std::optional<ShotRequest> m_shot;
+
+    std::optional<ShotRequest> takeShot();
+    static void                finishShot(ShotRequest&, bool ok, const std::string& detail);
+    std::string                prepareReadback(const ImageParameters& image, ShotReadback& rb);
+    void recordReadback(vvk::CommandBuffer& cmd, const ImageParameters& image, ShotReadback& rb);
+    std::string writeReadback(ShotReadback& rb, const std::string& path);
 
     VkImageTiling                      m_ex_tiling { VK_IMAGE_TILING_OPTIMAL };
     std::shared_ptr<VulkanExSwapchain> m_ex_swapchain;
@@ -145,6 +176,17 @@ bool VulkanRender::inited() const { return pImpl->m_inited; }
 bool VulkanRender::init(RenderInitInfo info) { return pImpl->init(info); }
 void VulkanRender::destroy() { pImpl->destroy(); }
 void VulkanRender::drawFrame(Scene& scene) { pImpl->drawFrame(scene); };
+
+void VulkanRender::requestScreenshot(std::string                                   path,
+                                     std::function<void(bool, const std::string&)> done) {
+    std::optional<Impl::ShotRequest> replaced;
+    {
+        std::lock_guard<std::mutex> lk(pImpl->m_shot_mtx);
+        replaced.swap(pImpl->m_shot);
+        pImpl->m_shot = Impl::ShotRequest { std::move(path), std::move(done) };
+    }
+    if (replaced) Impl::finishShot(*replaced, false, "superseded by a newer screenshot request");
+}
 void VulkanRender::clearLastRenderGraph() { pImpl->clearLastRenderGraph(); };
 void VulkanRender::compileRenderGraph(Scene& scene, rg::RenderGraph& rg) {
     pImpl->compileRenderGraph(scene, rg);
@@ -209,6 +251,7 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
         .offscreen          = info.offscreen,
         .share_enabled      = info.share_gpu,
         .enable_valid_layer = info.enable_valid_layer,
+        .swapchain_readback = info.enable_readback && ! info.offscreen,
     };
     if (! info.offscreen) ci.create_surface = info.surface_info.createSurfaceOp;
 
@@ -232,6 +275,7 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
         VVK_CHECK_BOOL_RE(device().handle().CreateCommandPool(pool_info, m_cmd_pool));
     }
     m_rt_pool = std::make_unique<TextureCache>(device(), m_cmd_pool);
+    m_videos  = std::make_unique<VideoTextures>(device());
 
     // The offscreen swapchain is created lazily in beginFrameSource(): a screen
     // that ends up mirroring another never allocates one.
@@ -294,6 +338,8 @@ bool VulkanRender::Impl::initRes() {
 }
 
 void VulkanRender::Impl::destroy() {
+    if (auto shot = takeShot())
+        finishShot(*shot, false, "renderer destroyed before the next frame");
     if (! m_inited) return;
 
     // Finalize glslang (paired with InitializeProcess in init)
@@ -321,6 +367,7 @@ void VulkanRender::Impl::destroy() {
         // still alive, then drop the asset references it held. A secondary still
         // holding our swapchain keeps it alive via shared_ptr.
         m_ex_swapchain.reset();
+        m_videos.reset();
         m_rt_pool.reset();
         device().asset_cache().ReleaseScreen(m_token);
     }
@@ -355,6 +402,7 @@ bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
     rr.dyn_buf      = m_dyn_buf.get();
     rr.rt_pool      = m_rt_pool.get();
     rr.screen_token = m_token;
+    rr.videos       = m_videos.get();
     return true;
 }
 
@@ -384,7 +432,12 @@ void VulkanRender::Impl::drawFrame(Scene& scene) {
             RENDERDOC_DEVICEPOINTER_FROM_VKINSTANCE((VkInstance)instance().inst()), NULL);
 #endif
 
+    m_scene_time = scene.elapsingTime;
     if (instance().offscreen()) {
+        if (auto shot = takeShot())
+            finishShot(*shot,
+                       false,
+                       "frame readback is only available when rendering to a window swapchain");
         drawFrameOffscreen();
     } else {
         drawFrameSwapchain();
@@ -414,17 +467,41 @@ void VulkanRender::Impl::drawFrameSwapchain() {
 
     m_finpass->setPresent(image);
 
+    // A pending screenshot is served by this frame. The guard answers the caller
+    // if any of the checked Vulkan calls below bails out early, and first waits
+    // for the device so the readback buffer (destroyed right after the guard) is
+    // never freed while a submitted copy may still be writing it.
+    std::optional<ShotRequest> shot = takeShot();
+    ShotReadback               readback;
+    if (shot) {
+        if (auto err = prepareReadback(image, readback); ! err.empty()) {
+            finishShot(*shot, false, err);
+            shot.reset();
+        }
+    }
+    struct ShotGuard {
+        std::optional<ShotRequest>& shot;
+        const vvk::Device&          dev;
+        ~ShotGuard() {
+            if (! shot) return;
+            (void)dev.WaitIdle();
+            finishShot(*shot, false, "frame submission failed");
+        }
+    } shot_guard { shot, device().handle() };
+
     (void)rr.command.Begin(VkCommandBufferBeginInfo {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .pNext = nullptr,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     });
     m_dyn_buf->recordUpload(rr.command);
+    if (m_videos) m_videos->RecordUpdates(rr.command, m_scene_time);
     for (auto* p : m_passes) {
         if (p->prepared()) {
             p->execute(device(), rr);
         }
     }
+    if (shot) recordReadback(rr.command, image, readback);
     (void)rr.command.End();
 
     VkPipelineStageFlags wait_dst_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -457,6 +534,145 @@ void VulkanRender::Impl::drawFrameSwapchain() {
 
     VVK_CHECK_VOID_RE(rr.fence_frame.Wait(vk_wait_time));
     VVK_CHECK_VOID_RE(rr.fence_frame.Reset());
+
+    if (shot) {
+        const std::string err = writeReadback(readback, shot->path);
+        finishShot(*shot, err.empty(), err.empty() ? shot->path : err);
+        shot.reset();
+    }
+}
+
+std::optional<VulkanRender::Impl::ShotRequest> VulkanRender::Impl::takeShot() {
+    std::lock_guard<std::mutex> lk(m_shot_mtx);
+    std::optional<ShotRequest>  shot;
+    shot.swap(m_shot);
+    return shot;
+}
+
+void VulkanRender::Impl::finishShot(ShotRequest& shot, bool ok, const std::string& detail) {
+    if (ok)
+        LOG_INFO("screenshot written: %s", detail.c_str());
+    else
+        LOG_ERROR("screenshot %s failed: %s", shot.path.c_str(), detail.c_str());
+    if (shot.done) shot.done(ok, detail);
+    shot.done = nullptr;
+}
+
+// Checks that this swapchain image can be read back and allocates the host
+// buffer for it. Returns an empty string, or the reason it cannot be done.
+std::string VulkanRender::Impl::prepareReadback(const ImageParameters& image, ShotReadback& rb) {
+    const auto& swap = device().swapchain();
+    if (! swap.supportsReadback())
+        return "swapchain images are not readable (initialise with enable_readback on a surface "
+               "that supports TRANSFER_SRC)";
+
+    switch (swap.format()) {
+    case VK_FORMAT_B8G8R8A8_UNORM:
+    case VK_FORMAT_B8G8R8A8_SRGB: rb.order = utils::PixelOrder::BGRA; break;
+    case VK_FORMAT_R8G8B8A8_UNORM:
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32: rb.order = utils::PixelOrder::RGBA; break;
+    default: return "unsupported swapchain format for readback: " + std::to_string(swap.format());
+    }
+
+    rb.extent            = { image.extent.width, image.extent.height };
+    const VkDeviceSize n = (VkDeviceSize)rb.extent.width * rb.extent.height * 4;
+    VkBufferCreateInfo ci {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .size  = n,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    };
+    VmaAllocationCreateInfo vma_info {};
+    vma_info.usage  = VMA_MEMORY_USAGE_CPU_ONLY; // host visible + coherent
+    rb.buf.req_size = n;
+    if (auto res = vvk::CreateBuffer(device().vma_allocator(), ci, vma_info, rb.buf.handle);
+        res != VK_SUCCESS)
+        return "cannot allocate the readback buffer (VkResult " + std::to_string(res) + ")";
+    return {};
+}
+
+// Records the copy into the frame's own command buffer, after FinPass has left
+// the image in PRESENT_SRC_KHR. The image therefore never leaves the queue that
+// rendered it, and no queue-family ownership transfer is involved; the present
+// semaphore is signalled only after the copy completes.
+void VulkanRender::Impl::recordReadback(vvk::CommandBuffer& cmd, const ImageParameters& image,
+                                        ShotReadback& rb) {
+    const VkImageSubresourceRange range {
+        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel   = 0,
+        .levelCount     = 1,
+        .baseArrayLayer = 0,
+        .layerCount     = 1,
+    };
+    VkImageMemoryBarrier to_src {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .pNext               = nullptr,
+        .srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = image.handle,
+        .subresourceRange    = range,
+    };
+    cmd.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0,
+                        {},
+                        {},
+                        spanone { to_src });
+
+    VkBufferImageCopy region {
+        .bufferOffset      = 0,
+        .bufferRowLength   = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource  = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .imageOffset       = { 0, 0, 0 },
+        .imageExtent       = { rb.extent.width, rb.extent.height, 1 },
+    };
+    cmd.CopyImageToBuffer(
+        image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, *rb.buf.handle, spanone { region });
+
+    VkImageMemoryBarrier to_present = to_src;
+    to_present.srcAccessMask        = VK_ACCESS_TRANSFER_READ_BIT;
+    to_present.dstAccessMask        = 0;
+    to_present.oldLayout            = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_present.newLayout            = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkBufferMemoryBarrier to_host {
+        .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext               = nullptr,
+        .srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask       = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer              = *rb.buf.handle,
+        .offset              = 0,
+        .size                = VK_WHOLE_SIZE,
+    };
+    cmd.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+                        0,
+                        {},
+                        spanone { to_host },
+                        spanone { to_present });
+}
+
+// Runs after the frame fence has signalled.
+std::string VulkanRender::Impl::writeReadback(ShotReadback& rb, const std::string& path) {
+    void* raw = nullptr;
+    if (auto res = rb.buf.handle.MapMemory(&raw); res != VK_SUCCESS || raw == nullptr)
+        return "cannot map the readback buffer (VkResult " + std::to_string(res) + ")";
+    const std::string err = utils::WritePpmAtomic(path,
+                                                  rb.extent.width,
+                                                  rb.extent.height,
+                                                  static_cast<const std::uint8_t*>(raw),
+                                                  (std::size_t)rb.buf.req_size,
+                                                  rb.order);
+    rb.buf.handle.UnMapMemory();
+    return err;
 }
 void VulkanRender::Impl::drawFrameOffscreen() {
     RenderingResources& rr    = m_rendering_resources;
@@ -470,6 +686,7 @@ void VulkanRender::Impl::drawFrameOffscreen() {
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     });
     m_dyn_buf->recordUpload(rr.command);
+    if (m_videos) m_videos->RecordUpdates(rr.command, m_scene_time);
 
     for (auto* p : m_passes) {
         if (p->prepared()) {
@@ -553,7 +770,8 @@ void VulkanRender::Impl::UpdateCameraFillMode(wallpaper::Scene&   scene,
 
 void VulkanRender::Impl::ensureSwapchain() {
     if (m_ex_swapchain || m_with_surface) return;
-    auto sc = CreateExSwapchain(*m_rt_pool, m_out_extent.width, m_out_extent.height, m_ex_tiling);
+    auto sc =
+        CreateExSwapchain(*m_rt_pool, m_out_extent.width, m_out_extent.height, m_ex_tiling, m_gpu);
     if (! sc) LOG_ERROR("failed to create ex-swapchain");
     std::lock_guard<std::mutex> lk(m_mirror_mtx);
     m_ex_swapchain = std::move(sc);
@@ -632,6 +850,8 @@ void VulkanRender::Impl::clearLastRenderGraph() {
         p->destory(device(), m_rendering_resources);
     }
     m_passes.clear();
+    // The device is idle: video decoders and their images can go.
+    if (m_videos) m_videos->Clear();
     // Drop only this screen's render targets and asset references; textures that
     // other screens still hold survive.
     m_rt_pool->Clear();

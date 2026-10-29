@@ -626,6 +626,8 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
         baseConstSvs["g_Color4"] = std::array<float, 4> {
             wpimgobj.color[0], wpimgobj.color[1], wpimgobj.color[2], wpimgobj.alpha
         };
+        baseConstSvs["g_Color"]      = wpimgobj.color;
+        baseConstSvs["g_Alpha"]      = wpimgobj.alpha;
         baseConstSvs["g_UserAlpha"]  = wpimgobj.alpha;
         baseConstSvs["g_Brightness"] = wpimgobj.brightness;
 
@@ -1140,7 +1142,7 @@ void AddWPObject(std::vector<WPObjectVar>& objs, const nlohmann::json& json_obj,
 
 std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std::string& buf,
                                             fs::VFS& vfs, audio::SoundManager& sm,
-                                            const std::string& userPropsOverride) {
+                                            const std::string& userPropsOverride) try {
     // Load user properties from project.json if available
     WPUserProperties userProps;
     const char*      projectPath =
@@ -1167,7 +1169,10 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
     nlohmann::json json;
     if (! PARSE_JSON(buf, json)) return nullptr;
     wpscene::WPScene sc;
-    sc.FromJson(json);
+    if (! sc.FromJson(json) || ! json.contains("objects") || ! json.at("objects").is_array()) {
+        LOG_ERROR("Invalid scene structure");
+        return nullptr;
+    }
     //	LOG_INFO(nlohmann::json(sc).dump(4));
 
     ParseContext context;
@@ -1222,9 +1227,13 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
         };
     }
 
-    context.scene->scene_id = scene_id;
+    context.scene->scene_id        = scene_id;
+    context.scene->user_props_json = userPropsOverride;
 
     WPShaderParser::InitGlslang();
+    struct GlslangScope {
+        ~GlslangScope() { WPShaderParser::FinalGlslang(); }
+    } glslangScope;
 
     for (WPObjectVar& obj : wp_objs) {
         std::visit(visitor::overload {
@@ -1244,6 +1253,8 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
                    obj);
     }
 
-    WPShaderParser::FinalGlslang();
     return context.scene;
+} catch (const nlohmann::json::exception& e) {
+    LOG_ERROR("Invalid scene data: %s", e.what());
+    return nullptr;
 }

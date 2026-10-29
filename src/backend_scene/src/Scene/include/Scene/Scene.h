@@ -48,6 +48,8 @@ public:
     std::unique_ptr<fs::VFS>             vfs;
 
     std::string scene_id { "unknown_id" };
+    // Keep mirror identity tied to the overrides used to parse this scene.
+    std::string user_props_json;
 
     bool first_frame_ok { false };
 

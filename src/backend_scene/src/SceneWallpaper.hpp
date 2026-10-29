@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <string>
 #include <string_view>
 #include <functional>
 #include "Type.hpp"
@@ -22,6 +23,16 @@ constexpr std::string_view PROPERTY_CACHE_PATH           = "cache_path";
 constexpr std::string_view PROPERTY_FIRST_FRAME_CALLBACK = "first_frame_callback";
 constexpr std::string_view PROPERTY_USER_PROPS           = "user_props";
 constexpr std::string_view PROPERTY_CACHE_PASSES         = "cache_passes";
+// Debug: dump the next presented frame. Set with setPropertyObject() and a
+// std::shared_ptr<ScreenshotRequest>; needs RenderInitInfo::enable_readback.
+constexpr std::string_view PROPERTY_SCREENSHOT = "screenshot";
+
+struct ScreenshotRequest {
+    std::string path; // binary PPM output; replaced atomically
+    // Runs exactly once: normally on the render thread, or on the submitting/stopping
+    // thread if rejected/cancelled. ok=true carries the written path, false the reason.
+    std::function<void(bool ok, const std::string& detail)> done;
+};
 
 // Normalized pointer at the middle of the wallpaper. The render loop stores this
 // until a mouse event arrives, and turning mouse input off writes it back so

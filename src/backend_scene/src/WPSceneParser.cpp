@@ -34,6 +34,8 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <optional>
 #include <random>
 #include <cmath>
 #include <functional>
@@ -46,6 +48,12 @@ using namespace Eigen;
 
 std::string getAddr(void* p) { return std::to_string(reinterpret_cast<intptr_t>(p)); }
 
+struct ObjectNode {
+    std::shared_ptr<SceneNode> node;
+    // World transform of the group the node hangs under, empty when it sits at the scene root.
+    std::optional<Matrix4d> group_trans;
+};
+
 struct ParseContext {
     std::shared_ptr<Scene> scene;
     WPShaderValueUpdater*  shader_updater;
@@ -57,10 +65,19 @@ struct ParseContext {
     std::shared_ptr<SceneNode> effect_camera_node;
     std::shared_ptr<SceneNode> global_camera_node;
     std::shared_ptr<SceneNode> global_perspective_camera_node;
+
+    // Node of every parsed object, index-aligned with wp_objs.
+    std::vector<ObjectNode> obj_nodes;
 };
 
 using WPObjectVar = std::variant<wpscene::WPImageObject, wpscene::WPParticleObject,
                                  wpscene::WPSoundObject, wpscene::WPLightObject>;
+
+// Object id and flat group reference straight from scene.json, index-aligned with wp_objs.
+struct WPObjectRef {
+    i32 id { 0 };
+    i32 parent { 0 };
+};
 
 namespace
 {
@@ -443,6 +460,36 @@ void LoadAlignment(SceneNode& node, std::string_view align, Vector2f size) {
     node.SetTranslate(trans);
 }
 
+struct WPTrans {
+    std::array<float, 3> translate { 0.0f, 0.0f, 0.0f };
+    std::array<float, 3> scale { 1.0f, 1.0f, 1.0f };
+    std::array<float, 3> rotation { 0.0f, 0.0f, 0.0f };
+};
+
+// A node outside the graph (the image effect output) only receives translate, scale and rotation,
+// so bake the group chain into those instead of letting SceneNode compose the parent matrix.
+WPTrans ComposeTrans(const SceneNode& node, const wpscene::WPImageObject& obj,
+                     const Matrix4d& group_trans) {
+    SceneNode local(
+        Vector3f(node.Translate().data()), Vector3f(obj.scale.data()), Vector3f(obj.angles.data()));
+    Matrix4d world = group_trans * local.GetLocalTrans();
+
+    Vector3d scale(world.col(0).head<3>().norm(),
+                   world.col(1).head<3>().norm(),
+                   world.col(2).head<3>().norm());
+    WPTrans  trans;
+    trans.translate = { (float)world(0, 3), (float)world(1, 3), (float)world(2, 3) };
+    if (scale.x() <= 0.0 || scale.y() <= 0.0 || scale.z() <= 0.0) return trans;
+    Matrix3d rot =
+        world.block<3, 3>(0, 0) *
+        DiagonalMatrix<double, 3>(Vector3d(1.0 / scale.x(), 1.0 / scale.y(), 1.0 / scale.z()));
+    // SceneNode composes rotation as rz * ry * rx
+    Vector3d euler = rot.eulerAngles(2, 1, 0);
+    trans.scale    = { (float)scale.x(), (float)scale.y(), (float)scale.z() };
+    trans.rotation = { (float)euler.z(), (float)euler.y(), (float)euler.x() };
+    return trans;
+}
+
 void LoadConstvalue(SceneMaterial& material, const wpscene::WPMaterial& wpmat,
                     const WPShaderInfo& info) {
     // load glname from alias and load to constvalue
@@ -544,7 +591,9 @@ void InitContext(ParseContext& context, fs::VFS& vfs, wpscene::WPScene& sc) {
     }
 }
 
-void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
+void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj,
+                   const std::shared_ptr<SceneNode>& spImgNode,
+                   const std::optional<Matrix4d>&    group_trans) {
     auto& wpimgobj = img_obj;
     auto& vfs      = *context.vfs;
 
@@ -603,10 +652,6 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
     }
 
     // wpimgobj.origin[1] = context.ortho_h - wpimgobj.origin[1];
-    auto spImgNode = std::make_shared<SceneNode>(Vector3f(wpimgobj.origin.data()),
-                                                 Vector3f(wpimgobj.scale.data()),
-                                                 Vector3f(wpimgobj.angles.data()));
-    LoadAlignment(*spImgNode, wpimgobj.alignment, { wpimgobj.size[0], wpimgobj.size[1] });
     spImgNode->ID() = wpimgobj.id;
     spImgNode->SetOffscreen(isOffscreen);
 
@@ -749,7 +794,15 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             imgEffectLayer->SetFinalBlend(imgBlendMode);
             imgEffectLayer->SetOffscreen(isOffscreen);
             imgEffectLayer->FinalMesh().ChangeMeshDataFrom(effct_final_mesh);
-            imgEffectLayer->FinalNode().CopyTrans(*spImgNode);
+            if (group_trans.has_value()) {
+                // effect output is rendered by a node outside the graph: bake the group into it
+                const auto trans = ComposeTrans(*spImgNode, wpimgobj, *group_trans);
+                imgEffectLayer->FinalNode().CopyTrans(SceneNode(Vector3f(trans.translate.data()),
+                                                                Vector3f(trans.scale.data()),
+                                                                Vector3f(trans.rotation.data())));
+            } else {
+                imgEffectLayer->FinalNode().CopyTrans(*spImgNode);
+            }
             if (isCompose) {
             } else {
                 spImgNode->CopyTrans(SceneNode());
@@ -923,7 +976,6 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             .allowReuse = true,
         };
     }
-    context.scene->sceneGraph->AppendChild(spImgNode);
 }
 
 struct ParticleChildPtr {
@@ -935,7 +987,8 @@ struct ParticleChildPtr {
 };
 
 void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartobj,
-                      ParticleChildPtr child_ptr = {}) {
+                      const std::shared_ptr<SceneNode>& graph_node,
+                      ParticleChildPtr                  child_ptr = {}) {
     if (! wppartobj.visible) return;
 
     struct ChildData {
@@ -959,17 +1012,15 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     if (is_child) {
         p_particle_obj = &(child_ptr.child->obj);
         spNode         = std::make_shared<SceneNode>(Vector3f(child_ptr.child->origin.data()),
-                                             Vector3f(child_ptr.child->scale.data()),
-                                             Vector3f(child_ptr.child->angles.data()));
+                                                     Vector3f(child_ptr.child->scale.data()),
+                                                     Vector3f(child_ptr.child->angles.data()));
         child_data     = ChildData(*child_ptr.child);
 
         child_ptr.max_instancecount *= child_data.maxcount;
 
     } else {
         p_particle_obj = &wppartobj.particleObj;
-        spNode         = std::make_shared<SceneNode>(Vector3f(wppartobj.origin.data()),
-                                             Vector3f(wppartobj.scale.data()),
-                                             Vector3f(wppartobj.angles.data()));
+        spNode         = graph_node;
     }
 
     wpscene::ParticleInstanceoverride override = wppartobj.instanceoverride;
@@ -1096,6 +1147,7 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     for (auto& child : particle_obj.children) {
         ParseParticleObj(context,
                          wppartobj,
+                         nullptr,
                          {
                              .child             = &child,
                              .node_parent       = spNode.get(),
@@ -1109,35 +1161,235 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     else
         context.scene->paritileSys->subsystems.emplace_back(std::move(particleSub));
 
-    if (is_child)
-        child_ptr.node_parent->AppendChild(spNode);
-    else
-        context.scene->sceneGraph->AppendChild(spNode);
+    if (is_child) child_ptr.node_parent->AppendChild(spNode);
 }
 
-void ParseLightObj(ParseContext& context, wpscene::WPLightObject& light_obj) {
-    auto node = std::make_shared<SceneNode>(Vector3f(light_obj.origin.data()),
-                                            Vector3f(light_obj.scale.data()),
-                                            Vector3f(light_obj.angles.data()));
-
+void ParseLightObj(ParseContext& context, wpscene::WPLightObject& light_obj,
+                   const std::shared_ptr<SceneNode>& node) {
     context.scene->lights.emplace_back(std::make_unique<SceneLight>(
         Vector3f(light_obj.color.data()), light_obj.radius, light_obj.intensity));
 
     auto& light = *(context.scene->lights.back());
     light.setNode(node);
-
-    context.scene->sceneGraph->AppendChild(node);
 }
 
 template<typename T>
-void AddWPObject(std::vector<WPObjectVar>& objs, const nlohmann::json& json_obj, fs::VFS& vfs) {
+bool AddWPObject(std::vector<WPObjectVar>& objs, const nlohmann::json& json_obj, fs::VFS& vfs) {
     T wpobj;
     if (! wpobj.FromJson(json_obj, vfs)) {
         LOG_ERROR("parse scene object failed, name: %s", wpobj.name.c_str());
-        return;
+        return false;
     }
     objs.push_back(wpobj);
+    return true;
 }
+
+// An object that carries only a transform and is referenced by other objects as their group.
+struct WPGroupObject {
+    bool FromJson(const nlohmann::json& json) {
+        GET_JSON_NAME_VALUE_NOWARN(json, "id", id);
+        GET_JSON_NAME_VALUE_NOWARN(json, "parent", parent);
+        GET_JSON_NAME_VALUE_NOWARN(json, "origin", origin);
+        GET_JSON_NAME_VALUE_NOWARN(json, "angles", angles);
+        GET_JSON_NAME_VALUE_NOWARN(json, "scale", scale);
+        return true;
+    }
+    i32                  id { 0 };
+    i32                  parent { 0 };
+    std::array<float, 3> origin { 0.0f, 0.0f, 0.0f };
+    std::array<float, 3> angles { 0.0f, 0.0f, 0.0f };
+    std::array<float, 3> scale { 1.0f, 1.0f, 1.0f };
+};
+
+// Objects that get a node of their own, everything else can only be a group.
+bool HasRenderablePayload(const nlohmann::json& json_obj) {
+    for (const char* key : { "image", "particle", "light" }) {
+        if (json_obj.contains(key) && ! json_obj.at(key).is_null()) return true;
+    }
+    return false;
+}
+
+// ParseImageObj draws an image object's own mesh through a camera cropped to the object and resets
+// the node to identity, so the node's transform in the scene graph is unused: the effect chain is
+// composited by a node outside the graph. Compose layers keep their transform, they render with
+// the scene camera.
+bool RendersThroughEffectCamera(const wpscene::WPImageObject& obj) {
+    if (obj.image == "models/util/composelayer.json") return false;
+    if (obj.colorBlendMode != 0) return true;
+    for (const auto& eff : obj.effects) {
+        if (eff.visible) return true;
+    }
+    return false;
+}
+
+// The parent a node may attach to, or 0 when it has to stay at the scene root because its group
+// is absent or the parent chain loops back to the node.
+i32 ResolveGroupParent(i32 id, i32 parent, const std::unordered_map<i32, i32>& parent_of,
+                       const std::unordered_map<i32, std::shared_ptr<SceneNode>>& node_of) {
+    if (parent == 0 || node_of.count(parent) == 0) return 0;
+    std::unordered_set<i32> seen;
+    for (i32 cur = parent; cur != 0;) {
+        if (cur == id || ! seen.insert(cur).second) return 0;
+        auto it = parent_of.find(cur);
+        if (it == parent_of.end()) break;
+        cur = it->second;
+    }
+    return parent;
+}
+
+// Wallpaper Engine keeps groups flat: a child names its group by id in "parent", and the group
+// can be a bare transform node without image, particle or light. Build every node first and link
+// them afterwards, so a parent may follow its children in the objects array.
+void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
+                      const std::vector<WPObjectVar>& wp_objs,
+                      const std::vector<WPObjectRef>& wp_obj_refs) {
+    struct Entry {
+        std::shared_ptr<SceneNode> node;
+        Matrix4d                   local;
+        i32                        id { 0 };
+        i32                        parent { 0 };
+        i32                        group { 0 };
+    };
+    std::vector<Entry> entrys;
+
+    auto add_node = [&entrys](const std::shared_ptr<SceneNode>& node,
+                              const std::array<float, 3>&       scale,
+                              const std::array<float, 3>&       angles,
+                              i32                               id,
+                              i32                               parent) {
+        SceneNode local(
+            Vector3f(node->Translate().data()), Vector3f(scale.data()), Vector3f(angles.data()));
+        entrys.push_back({ node, local.GetLocalTrans(), id, parent, 0 });
+    };
+
+    // one node per parsed object, in parse order, so root order stays as it was
+    context.obj_nodes.reserve(wp_objs.size());
+    for (usize i = 0; i < wp_objs.size(); i++) {
+        const auto& ref = wp_obj_refs.at(i);
+        std::visit(visitor::overload {
+                       [&](const wpscene::WPImageObject& o) {
+                           auto node = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
+                                                                   Vector3f(o.scale.data()),
+                                                                   Vector3f(o.angles.data()));
+                           LoadAlignment(*node, o.alignment, { o.size[0], o.size[1] });
+                           add_node(node, o.scale, o.angles, ref.id, ref.parent);
+                           context.obj_nodes.push_back({ node, std::nullopt });
+                       },
+                       [&](const wpscene::WPParticleObject& o) {
+                           auto node = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
+                                                                   Vector3f(o.scale.data()),
+                                                                   Vector3f(o.angles.data()));
+                           add_node(node, o.scale, o.angles, ref.id, ref.parent);
+                           context.obj_nodes.push_back({ node, std::nullopt });
+                       },
+                       [&](const wpscene::WPLightObject& o) {
+                           auto node = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
+                                                                   Vector3f(o.scale.data()),
+                                                                   Vector3f(o.angles.data()));
+                           add_node(node, o.scale, o.angles, ref.id, ref.parent);
+                           context.obj_nodes.push_back({ node, std::nullopt });
+                       },
+                       [&](const wpscene::WPSoundObject&) {
+                           context.obj_nodes.push_back({ nullptr, std::nullopt });
+                       },
+                   },
+                   wp_objs[i]);
+    }
+
+    // group nodes: referenced parents that have no renderable payload of their own
+    std::unordered_set<i32> parent_ids;
+    for (const auto& json_obj : json.at("objects")) {
+        i32 parent { 0 };
+        GET_JSON_NAME_VALUE_NOWARN(json_obj, "parent", parent);
+        if (parent != 0) parent_ids.insert(parent);
+    }
+    // Nodes ParseImageObj resets to identity render at the crop origin, so a group above them must
+    // not reach them: they stay at the scene root while their own transform is carried by a
+    // transform-only node for their children.
+    std::unordered_set<i32> detached;
+    for (usize i = 0; i < wp_objs.size(); i++) {
+        const auto* img = std::get_if<wpscene::WPImageObject>(&wp_objs.at(i));
+        if (img != nullptr && RendersThroughEffectCamera(*img))
+            detached.insert(wp_obj_refs.at(i).id);
+    }
+    for (const auto& json_obj : json.at("objects")) {
+        if (! json_obj.contains("id") || HasRenderablePayload(json_obj)) continue;
+        WPGroupObject group;
+        if (! group.FromJson(json_obj)) continue;
+        if (group.id == 0 || parent_ids.count(group.id) == 0) continue;
+        auto node  = std::make_shared<SceneNode>(Vector3f(group.origin.data()),
+                                                 Vector3f(group.scale.data()),
+                                                 Vector3f(group.angles.data()));
+        node->ID() = group.id;
+        add_node(node, group.scale, group.angles, group.id, group.parent);
+    }
+
+    std::unordered_map<i32, i32>                        parent_of;
+    std::unordered_map<i32, std::shared_ptr<SceneNode>> node_of;
+    for (const auto& entry : entrys) {
+        if (entry.id == 0) continue;
+        parent_of[entry.id] = entry.parent;
+        node_of[entry.id]   = entry.node;
+    }
+    for (auto& entry : entrys) {
+        entry.group = ResolveGroupParent(entry.id, entry.parent, parent_of, node_of);
+        if (entry.parent != 0 && entry.group == 0) {
+            LOG_ERROR("scene object id=%d: parent %d is missing or cyclic, attach it to the scene "
+                      "root",
+                      entry.id,
+                      entry.parent);
+        }
+    }
+
+    // carrier of a detached node, standing in for it where its children attach
+    std::unordered_map<i32, std::shared_ptr<SceneNode>> carrier_of;
+    for (auto& entry : entrys) {
+        if (detached.count(entry.id) == 0 || parent_ids.count(entry.id) == 0) continue;
+        auto carrier = std::make_shared<SceneNode>();
+        carrier->CopyTrans(*entry.node);
+        if (entry.group != 0)
+            node_of.at(entry.group)->AppendChild(carrier);
+        else
+            context.scene->sceneGraph->AppendChild(carrier);
+        carrier_of[entry.id] = carrier;
+    }
+
+    for (auto& entry : entrys) {
+        // the node itself renders at the crop origin, so it must not inherit the group
+        if (detached.count(entry.id) != 0) {
+            context.scene->sceneGraph->AppendChild(entry.node);
+            continue;
+        }
+        if (entry.group == 0) {
+            context.scene->sceneGraph->AppendChild(entry.node);
+            continue;
+        }
+        auto carrier = carrier_of.find(entry.group);
+        if (carrier != carrier_of.end())
+            carrier->second->AppendChild(entry.node);
+        else
+            node_of.at(entry.group)->AppendChild(entry.node);
+    }
+
+    // world transform of each node, needed to place grouped image effect output outside the graph
+    std::unordered_map<i32, Matrix4d> world_of;
+    std::function<Matrix4d(i32)>      world_trans = [&](i32 id) -> Matrix4d {
+        if (id == 0) return Matrix4d::Identity();
+        if (auto it = world_of.find(id); it != world_of.end()) return it->second;
+        auto entry = std::find_if(entrys.begin(), entrys.end(), [id](const Entry& e) {
+            return e.id == id;
+        });
+        if (entry == entrys.end()) return Matrix4d::Identity();
+        Matrix4d trans = world_trans(entry->group) * entry->local;
+        world_of[id]   = trans;
+        return trans;
+    };
+    for (usize i = 0; i < wp_objs.size(); i++) {
+        i32 group = entrys.at(i).group;
+        if (group != 0) context.obj_nodes.at(i).group_trans = world_trans(group);
+    }
+}
+
 } // namespace
 
 std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std::string& buf,
@@ -1178,17 +1430,24 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
     ParseContext context;
 
     std::vector<WPObjectVar> wp_objs;
+    std::vector<WPObjectRef> wp_obj_refs;
 
     for (auto& obj : json.at("objects")) {
+        WPObjectRef ref;
+        GET_JSON_NAME_VALUE_NOWARN(obj, "id", ref.id);
+        GET_JSON_NAME_VALUE_NOWARN(obj, "parent", ref.parent);
+
+        bool parsed = false;
         if (obj.contains("image") && ! obj.at("image").is_null()) {
-            AddWPObject<wpscene::WPImageObject>(wp_objs, obj, vfs);
+            parsed = AddWPObject<wpscene::WPImageObject>(wp_objs, obj, vfs);
         } else if (obj.contains("particle") && ! obj.at("particle").is_null()) {
-            AddWPObject<wpscene::WPParticleObject>(wp_objs, obj, vfs);
+            parsed = AddWPObject<wpscene::WPParticleObject>(wp_objs, obj, vfs);
         } else if (obj.contains("sound") && ! obj.at("sound").is_null()) {
-            AddWPObject<wpscene::WPSoundObject>(wp_objs, obj, vfs);
+            parsed = AddWPObject<wpscene::WPSoundObject>(wp_objs, obj, vfs);
         } else if (obj.contains("light") && ! obj.at("light").is_null()) {
-            AddWPObject<wpscene::WPLightObject>(wp_objs, obj, vfs);
+            parsed = AddWPObject<wpscene::WPLightObject>(wp_objs, obj, vfs);
         }
+        if (parsed) wp_obj_refs.push_back(ref);
     }
 
     if (sc.general.orthogonalprojection.auto_) {
@@ -1235,22 +1494,25 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
         ~GlslangScope() { WPShaderParser::FinalGlslang(); }
     } glslangScope;
 
-    for (WPObjectVar& obj : wp_objs) {
+    BuildObjectNodes(context, json, wp_objs, wp_obj_refs);
+
+    for (usize i = 0; i < wp_objs.size(); i++) {
+        const auto& node = context.obj_nodes.at(i);
         std::visit(visitor::overload {
-                       [&context](wpscene::WPImageObject& obj) {
-                           ParseImageObj(context, obj);
+                       [&context, &node](wpscene::WPImageObject& obj) {
+                           ParseImageObj(context, obj, node.node, node.group_trans);
                        },
-                       [&context](wpscene::WPParticleObject& obj) {
-                           ParseParticleObj(context, obj);
+                       [&context, &node](wpscene::WPParticleObject& obj) {
+                           ParseParticleObj(context, obj, node.node);
                        },
                        [&context, &sm](wpscene::WPSoundObject& obj) {
                            WPSoundParser::Parse(obj, *context.vfs, sm);
                        },
-                       [&context](wpscene::WPLightObject& obj) {
-                           ParseLightObj(context, obj);
+                       [&context, &node](wpscene::WPLightObject& obj) {
+                           ParseLightObj(context, obj, node.node);
                        },
                    },
-                   obj);
+                   wp_objs[i]);
     }
 
     return context.scene;

@@ -17,9 +17,12 @@
 #endif
 
 #include <clocale>
+#include <algorithm>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <functional>
+#include <limits>
 
 #include "glExtra.hpp"
 #include "SceneWallpaper.hpp"
@@ -54,6 +57,18 @@ QSGTexture* createTextureFromGl(uint32_t handle, QSize size, QQuickWindow* windo
 #else
     return window->createTextureFromId(handle, size);
 #endif
+}
+
+// QQuickItem extents are fractional logical pixels (2560 logical px at 1.5x scale is
+// 1706.6666…), so the exact texel count is a double that must be rounded, not truncated:
+// 2194.2857… * 1.75 is 3839.9999…, and truncating it drops a whole column of the
+// swapchain. Clamp into the uint16_t range the render init accepts so a zero/NaN ratio
+// cannot produce an empty extent and a huge one cannot overflow.
+uint16_t renderExtent(qreal logical, qreal dpr) {
+    const double px = static_cast<double>(logical) * static_cast<double>(dpr);
+    if (! std::isfinite(px) || px <= 0.0) return 1;
+    if (px >= 65535.0) return std::numeric_limits<uint16_t>::max();
+    return static_cast<uint16_t>(std::clamp(std::lround(px), 1L, 65535L));
 }
 
 wallpaper::FillMode ToWPFillMode(int fillMode) {
@@ -252,8 +267,8 @@ QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
                 return (QSGTexture*)nullptr;
             });
         if (node->initGl()) {
-            node->initVulkan(width() * window()->devicePixelRatio(),
-                             height() * window()->devicePixelRatio());
+            const qreal dpr = window()->devicePixelRatio();
+            node->initVulkan(renderExtent(width(), dpr), renderExtent(height(), dpr));
 
             connect(
                 node, &TextureNode::redraw, window(), &QQuickWindow::update, Qt::QueuedConnection);

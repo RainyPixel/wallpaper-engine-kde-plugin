@@ -338,6 +338,38 @@ inline std::string Preprocessor(const std::string& in_src, ShaderType type, cons
         src.swap(lf);
         if (! src.empty() && src.back() != '\n') src += '\n';
     }
+    // Workshop shaders (and WE's own headers) sometimes carry a stray #endif or
+    // #else at nesting depth zero. WE's preprocessor ignores it; glslang's
+    // silently drops everything after it (losing main()'s closing brace ->
+    // "unexpected end of file"). Blank such lines.
+    {
+        std::regex  re_open(R"(^\s*#\s*if(def|ndef)?\b)");
+        std::regex  re_close(R"(^\s*#\s*endif\b)");
+        std::regex  re_else(R"(^\s*#\s*(else|elif)\b)");
+        std::string out;
+        out.reserve(src.size());
+        int   depth = 0;
+        usize pos   = 0;
+        while (pos < src.size()) {
+            usize end = src.find('\n', pos);
+            if (end == std::string::npos) end = src.size();
+            std::string line = src.substr(pos, end - pos);
+            if (std::regex_search(line, re_open)) {
+                depth++;
+            } else if (std::regex_search(line, re_close)) {
+                if (depth == 0)
+                    line = "// stray #endif removed";
+                else
+                    depth--;
+            } else if (std::regex_search(line, re_else)) {
+                if (depth == 0) line = "// stray #else removed";
+            }
+            out += line;
+            out += '\n';
+            pos = end + 1;
+        }
+        src.swap(out);
+    }
     // workaround #require directive
     {
         std::regex re_require("(^|\r?\n)#require (.+)(\r?\n)");
@@ -351,14 +383,16 @@ inline std::string Preprocessor(const std::string& in_src, ShaderType type, cons
 
     auto* data = src.c_str();
     shader.setStrings(&data, 1);
-    shader.preprocess(&vulkan::DefaultTBuiltInResource,
-                      110,
-                      EProfile::ECoreProfile,
-                      false,
-                      false,
-                      emsg,
-                      &res,
-                      includer);
+    if (! shader.preprocess(&vulkan::DefaultTBuiltInResource,
+                            110,
+                            EProfile::ECoreProfile,
+                            false,
+                            false,
+                            emsg,
+                            &res,
+                            includer)) {
+        LOG_ERROR("glslang preprocess failed: %s", shader.getInfoLog());
+    }
 
     // (?:^|\s) lets us match "out vec2 foo;" at column 0 (no qualifier) as well as
     // "smooth out vec4 foo;" where the qualifier precedes the keyword.
@@ -581,6 +615,87 @@ inline std::string FixImplicitConversions(const std::string& src) {
                     }
                     pos = end;
                 }
+            }
+        }
+
+        // Fix: HLSL truncates a vector to a scalar implicitly (keeps the first
+        // component), e.g. "float N = vec2_expr;". GLSL requires the swizzle, so
+        // wrap the initializer. Only plain operand arithmetic is typed here: a
+        // member selection's width is its swizzle length, so "V.z / V.w" stays
+        // scalar, and call/ternary/index operands are left alone.
+        // NOTE: scalar targets only, vecN truncation is handled above.
+        {
+            std::map<std::string, int> widths;
+            auto add_width = [&widths](const std::set<std::string>& vars, int width) {
+                for (const auto& name : vars) {
+                    auto [it, inserted] = widths.emplace(name, width);
+                    if (! inserted && it->second != width) it->second = -1;
+                }
+            };
+            add_width(vec2_vars, 2);
+            add_width(vec3_vars, 3);
+            add_width(vec4_vars, 4);
+            add_width(non_vector_vars, 1);
+
+            const std::regex number(R"(^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?[fFuU]?$)");
+            const std::regex member(R"(^([A-Za-z_]\w*)\.([xyzw]{1,4}|[rgba]{1,4})$)");
+            const std::regex ident(R"(^[A-Za-z_]\w*$)");
+
+            auto trim = [](std::string s) {
+                const auto begin = s.find_first_not_of(" \t\r\n");
+                if (begin == std::string::npos) return std::string {};
+                return s.substr(begin, s.find_last_not_of(" \t\r\n") - begin + 1);
+            };
+            // 0 marks an operand whose width can't be proven, the whole statement is
+            // then skipped.
+            auto operand_width = [&](const std::string& operand) {
+                const auto op = trim(operand);
+                if (op.empty() || std::regex_match(op, number)) return 1;
+                std::smatch match;
+                if (std::regex_match(op, match, member)) return (int)match[2].length();
+                if (std::regex_match(op, ident)) {
+                    const auto it = widths.find(op);
+                    if (it != widths.end() && it->second > 0) return it->second;
+                }
+                return 0;
+            };
+
+            const std::regex decl(R"(\bfloat\s+(\w+)\s*=\s*([^;{}]*);)");
+            std::string      replaced;
+            usize            last      = 0;
+            bool             rewritten = false;
+            for (auto it = std::sregex_iterator(result.begin(), result.end(), decl);
+                 it != std::sregex_iterator();
+                 ++it) {
+                const std::string initializer = (*it)[2].str();
+                if (initializer.find_first_of("()?,[]") != std::string::npos) continue;
+                int  width       = 1;
+                bool known       = true;
+                auto add_operand = [&](const std::string& op) {
+                    const int w = operand_width(op);
+                    if (w == 0) known = false;
+                    width = std::max(width, w);
+                };
+                std::string operand;
+                for (const char c : initializer) {
+                    if (c == '+' || c == '-' || c == '*' || c == '/') {
+                        add_operand(operand);
+                        operand.clear();
+                    } else {
+                        operand += c;
+                    }
+                }
+                add_operand(operand);
+                if (! known || width <= 1) continue;
+                const usize begin = (usize)(*it).position();
+                replaced.append(result, last, begin - last);
+                replaced += "float " + (*it)[1].str() + " = (" + trim(initializer) + ").x;";
+                last      = begin + (usize)(*it).length();
+                rewritten = true;
+            }
+            if (rewritten) {
+                replaced.append(result, last, std::string::npos);
+                result.swap(replaced);
             }
         }
 

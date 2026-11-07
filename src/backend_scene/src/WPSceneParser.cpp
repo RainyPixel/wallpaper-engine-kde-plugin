@@ -1256,11 +1256,16 @@ void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
                               const std::array<float, 3>&       scale,
                               const std::array<float, 3>&       angles,
                               i32                               id,
-                              i32                               parent) {
+                              i32                               parent) -> i32 {
         SceneNode local(
             Vector3f(node->Translate().data()), Vector3f(scale.data()), Vector3f(angles.data()));
         entrys.push_back({ node, local.GetLocalTrans(), id, parent, 0 });
+        return (i32)entrys.size() - 1;
     };
+
+    // entrys is not index-aligned with wp_objs: sound objects get no entry, and group nodes are
+    // appended after them. Remember each object's own entry so the lookups below stay in range.
+    std::vector<i32> obj_entry(wp_objs.size(), -1);
 
     // one node per parsed object, in parse order, so root order stays as it was
     context.obj_nodes.reserve(wp_objs.size());
@@ -1272,21 +1277,21 @@ void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
                                                                    Vector3f(o.scale.data()),
                                                                    Vector3f(o.angles.data()));
                            LoadAlignment(*node, o.alignment, { o.size[0], o.size[1] });
-                           add_node(node, o.scale, o.angles, ref.id, ref.parent);
+                           obj_entry[i] = add_node(node, o.scale, o.angles, ref.id, ref.parent);
                            context.obj_nodes.push_back({ node, std::nullopt });
                        },
                        [&](const wpscene::WPParticleObject& o) {
-                           auto node = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
-                                                                   Vector3f(o.scale.data()),
-                                                                   Vector3f(o.angles.data()));
-                           add_node(node, o.scale, o.angles, ref.id, ref.parent);
+                           auto node    = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
+                                                                      Vector3f(o.scale.data()),
+                                                                      Vector3f(o.angles.data()));
+                           obj_entry[i] = add_node(node, o.scale, o.angles, ref.id, ref.parent);
                            context.obj_nodes.push_back({ node, std::nullopt });
                        },
                        [&](const wpscene::WPLightObject& o) {
-                           auto node = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
-                                                                   Vector3f(o.scale.data()),
-                                                                   Vector3f(o.angles.data()));
-                           add_node(node, o.scale, o.angles, ref.id, ref.parent);
+                           auto node    = std::make_shared<SceneNode>(Vector3f(o.origin.data()),
+                                                                      Vector3f(o.scale.data()),
+                                                                      Vector3f(o.angles.data()));
+                           obj_entry[i] = add_node(node, o.scale, o.angles, ref.id, ref.parent);
                            context.obj_nodes.push_back({ node, std::nullopt });
                        },
                        [&](const wpscene::WPSoundObject&) {
@@ -1385,7 +1390,9 @@ void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
         return trans;
     };
     for (usize i = 0; i < wp_objs.size(); i++) {
-        i32 group = entrys.at(i).group;
+        const i32 entry = obj_entry.at(i);
+        if (entry < 0) continue;
+        const i32 group = entrys.at((usize)entry).group;
         if (group != 0) context.obj_nodes.at(i).group_trans = world_trans(group);
     }
 }

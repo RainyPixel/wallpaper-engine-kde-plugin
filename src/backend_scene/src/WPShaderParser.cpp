@@ -16,6 +16,12 @@
 #include <stack>
 #include <charconv>
 #include <string>
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <map>
+#include <set>
+#include <vector>
 
 static constexpr std::string_view SHADER_PLACEHOLD { "__SHADER_PLACEHOLD__" };
 
@@ -59,6 +65,11 @@ static constexpr const char* pre_shader_code = R"(#version 330
 vec2 pow(vec2 x, float y) { return pow(x, vec2(y)); }
 vec3 pow(vec3 x, float y) { return pow(x, vec3(y)); }
 vec4 pow(vec4 x, float y) { return pow(x, vec4(y)); }
+// HLSL promotes an int exponent; GLSL has no int->float conversion.
+float pow(float x, int y) { return pow(x, float(y)); }
+vec2 pow(vec2 x, int y) { return pow(x, vec2(y)); }
+vec3 pow(vec3 x, int y) { return pow(x, vec3(y)); }
+vec4 pow(vec4 x, int y) { return pow(x, vec4(y)); }
 // HLSL accepts the scalar in either position of max/min; GLSL only as the
 // second argument. (An argument-swapping macro used to do this, but it broke
 // the already-valid max(vecN, scalar) order.)
@@ -451,9 +462,724 @@ inline std::string Finalprocessor(const WPShaderUnit& unit, const WPPreprocessor
     return std::regex_replace(unit.src, re_hold, insert_str);
 }
 
+// --- HLSL call/argument conversions ---------------------------------------
+//
+// HLSL converts between widths freely: a wider argument is truncated, a scalar
+// is broadcast, an int literal is promoted. GLSL does none of that, so a scene
+// written for DirectX reaches glslang with calls it can never resolve.
+//
+// Every fix below fires only when the width of an operand is proven from the
+// unit's own declarations; a construct that can't be proven is left untouched,
+// because rewriting it on a guess is how a shader that compiles today stops
+// compiling.
+
+inline int TypeWidth(const std::string& type) {
+    if (type == "float" || type == "int" || type == "uint" || type == "bool" || type == "double")
+        return 1;
+    if (type == "vec2") return 2;
+    if (type == "vec3") return 3;
+    if (type == "vec4") return 4;
+    return 0;
+}
+
+// Swizzle that keeps the first width components.
+inline std::string NarrowSwizzle(int width) {
+    switch (width) {
+    case 1: return ".x";
+    case 2: return ".xy";
+    case 3: return ".xyz";
+    default: return ".xyzw";
+    }
+}
+
+// std::regex (libstdc++) has no lookbehind assertion, so a token boundary is
+// checked here: true when pos starts a token rather than continuing one.
+inline bool AtTokenStart(const std::string& src, usize pos) {
+    if (pos == 0) return true;
+    const unsigned char c = (unsigned char)src[pos - 1];
+    return ! (std::isalnum(c) || c == '_' || c == '.');
+}
+
+inline std::string TrimSpace(const std::string& s) {
+    const auto begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) return {};
+    return s.substr(begin, s.find_last_not_of(" \t\r\n") - begin + 1);
+}
+
+// Declared width of each scalar/vector variable in the unit. A name declared
+// with two different widths is stored as 0 and never used.
+inline std::map<std::string, int> CollectDeclWidths(const std::string& src) {
+    std::map<std::string, int> widths;
+    const std::regex           re(R"((?:^|[^\w.])(float|int|uint|bool|double|vec2|vec3|vec4))"
+                                  R"(\s+([A-Za-z_]\w*)(?=\s*[;,=)]))",
+                                  std::regex::ECMAScript | std::regex::multiline);
+    for (auto it = std::sregex_iterator(src.begin(), src.end(), re); it != std::sregex_iterator();
+         ++it) {
+        const int width { TypeWidth((*it)[1].str()) };
+        auto [pos, inserted] = widths.emplace((*it)[2].str(), width);
+        if (! inserted && pos->second != width) pos->second = 0;
+    }
+    return widths;
+}
+
+// Index of the bracket closing src[open], npos when unbalanced.
+inline usize FindMatch(const std::string& src, usize open) {
+    if (open >= src.size()) return std::string::npos;
+    const char o = src[open];
+    const char c = o == '(' ? ')' : o == '[' ? ']' : o == '{' ? '}' : '\0';
+    if (c == '\0') return std::string::npos;
+    int depth = 0;
+    for (usize i = open; i < src.size(); i++) {
+        if (src[i] == o) {
+            depth++;
+        } else if (src[i] == c) {
+            if (--depth == 0) return i;
+        }
+    }
+    return std::string::npos;
+}
+
+// Byte ranges of the comma separated parts of src at bracket depth zero.
+inline std::vector<std::pair<usize, usize>> SplitTopLevel(const std::string& src) {
+    std::vector<std::pair<usize, usize>> parts;
+    usize                                begin { 0 };
+    int                                  depth { 0 };
+    for (usize i = 0; i < src.size(); i++) {
+        const char c = src[i];
+        if (c == '(' || c == '[' || c == '{') depth++;
+        if (c == ')' || c == ']' || c == '}') depth--;
+        if (c == ',' && depth == 0) {
+            parts.emplace_back(begin, i);
+            begin = i + 1;
+        }
+    }
+    parts.emplace_back(begin, src.size());
+    return parts;
+}
+
+struct TextEdit {
+    usize       begin;
+    usize       end;
+    std::string text;
+};
+
+// Replace [begin, end) of src for each edit; overlapping edits are dropped.
+inline std::string ApplyEdits(const std::string& src, std::vector<TextEdit> edits) {
+    std::sort(edits.begin(), edits.end(), [](const TextEdit& a, const TextEdit& b) {
+        return a.begin < b.begin;
+    });
+    std::string out;
+    usize       last { 0 };
+    for (const auto& edit : edits) {
+        if (edit.begin < last) continue;
+        out.append(src, last, edit.begin - last);
+        out += edit.text;
+        last = edit.end;
+    }
+    out.append(src, last, std::string::npos);
+    return out;
+}
+
+// Width declared by an in/out declaration line (0 when it can't be parsed).
+inline int DeclWidth(const std::string& decl) {
+    const std::regex re(R"(\b(float|int|uint|bool|double|vec2|vec3|vec4)\s+[A-Za-z_]\w*)");
+    std::smatch      match;
+    if (! std::regex_search(decl, match, re)) return 0;
+    return TypeWidth(match[1].str());
+}
+
+struct ChainAtom {
+    int   width { 0 };
+    bool  swizzlable { false };
+    usize begin { 0 };
+    usize end { 0 };
+};
+
+struct ChainScan {
+    bool                   ok { false };
+    int                    width { 0 };
+    std::vector<ChainAtom> atoms;
+};
+
+// Prove the width of a pure arithmetic chain: numbers, declared variables,
+// swizzles, vector constructors and texture() samples joined by + - * /.
+// Parentheses are transparent. A comparison, ternary, subscript, hex literal or
+// a call with an unknown result leaves the chain unproven.
+inline ChainScan ScanChain(const std::string& src, const std::map<std::string, int>& widths) {
+    ChainScan scan;
+    usize     pos { 0 };
+    int       depth { 0 };
+    bool      expect_operand { true };
+    auto      skip_space = [&src](usize p) {
+        while (p < src.size() && std::isspace((unsigned char)src[p])) p++;
+        return p;
+    };
+    while (true) {
+        pos = skip_space(pos);
+        if (pos >= src.size()) break;
+        const char c = src[pos];
+        if (expect_operand) {
+            if (c == '+' || c == '-') {
+                pos++;
+                continue;
+            }
+            if (c == '(') {
+                depth++;
+                pos++;
+                continue;
+            }
+        } else {
+            if (c == ')') {
+                if (depth == 0) return {};
+                depth--;
+                pos++;
+                continue;
+            }
+            if (c == '+' || c == '-' || c == '*' || c == '/') {
+                pos++;
+                expect_operand = true;
+                continue;
+            }
+            return {}; // two operands in a row
+        }
+        const usize begin      = pos;
+        int         width      = 0;
+        bool        swizzlable = false;
+        if (std::isdigit((unsigned char)c) ||
+            (c == '.' && pos + 1 < src.size() && std::isdigit((unsigned char)src[pos + 1]))) {
+            usize p   = pos;
+            bool  dot = false;
+            while (p < src.size() &&
+                   (std::isdigit((unsigned char)src[p]) || (src[p] == '.' && ! dot))) {
+                if (src[p] == '.') dot = true;
+                p++;
+            }
+            if (p < src.size() && (src[p] == 'e' || src[p] == 'E')) {
+                usize q = p + 1;
+                if (q < src.size() && (src[q] == '+' || src[q] == '-')) q++;
+                if (q < src.size() && std::isdigit((unsigned char)src[q])) {
+                    while (q < src.size() && std::isdigit((unsigned char)src[q])) q++;
+                    p = q;
+                }
+            }
+            if (p < src.size() && std::strchr("fFuU", src[p]) != nullptr) p++;
+            width = 1;
+            pos   = p;
+        } else if (std::isalpha((unsigned char)c) || c == '_') {
+            usize p = pos;
+            while (p < src.size() && (std::isalnum((unsigned char)src[p]) || src[p] == '_')) p++;
+            const std::string name = src.substr(pos, p - pos);
+            if (p < src.size() && src[p] == '(') {
+                const usize close = FindMatch(src, p);
+                if (close == std::string::npos) return {};
+                width = TypeWidth(name);
+                if (name == "texture" || name == "textureLod") width = 4;
+                if (width == 0) return {};
+                pos = close + 1;
+            } else if (p < src.size() && src[p] == '.') {
+                usize       q { p + 1 };
+                std::string swizzle;
+                while (q < src.size() && swizzle.size() < 4 &&
+                       std::strchr("xyzwrgba", src[q]) != nullptr)
+                    swizzle += src[q++];
+                if (swizzle.empty()) return {};
+                width = (int)swizzle.size();
+                pos   = q;
+            } else {
+                const auto it = widths.find(name);
+                if (it == widths.end() || it->second <= 0) return {};
+                width      = it->second;
+                swizzlable = true;
+                pos        = p;
+            }
+        } else {
+            return {};
+        }
+        scan.atoms.push_back({ width, swizzlable, begin, pos });
+        scan.width     = std::max(scan.width, width);
+        expect_operand = false;
+    }
+    if (expect_operand || depth != 0 || scan.atoms.empty()) return {};
+    scan.ok = true;
+    return scan;
+}
+
+// Parameter types of the unit's own single-line function definitions, keyed by
+// name. An overloaded name is dropped, as is any signature with a type this
+// pass does not model.
+inline std::map<std::string, std::vector<std::string>>
+CollectFunctionParams(const std::string& src, std::vector<std::pair<usize, usize>>& spans) {
+    std::map<std::string, std::vector<std::string>> params;
+    std::set<std::string>                           overloaded;
+    const std::regex                                sig(
+        R"((?:^|\n)[ \t]*(?:const[ \t]+)?(float|vec2|vec3|vec4|int|uint|bool|void)[ \t]+)"
+        R"((\w+)[ \t]*\(([^(){};]*)\)\s*\{)",
+        std::regex::ECMAScript | std::regex::multiline);
+    for (auto it = std::sregex_iterator(src.begin(), src.end(), sig); it != std::sregex_iterator();
+         ++it) {
+        const usize begin = (usize)(*it).position();
+        spans.emplace_back(begin, begin + (usize)(*it).length());
+        const std::string name = (*it)[2].str();
+        if (name == "main") continue;
+        const std::string        source = (*it)[3].str();
+        std::vector<std::string> types;
+        bool                     usable { true };
+        for (const auto& [pbegin, pend] : SplitTopLevel(source)) {
+            const std::string param = TrimSpace(source.substr(pbegin, pend - pbegin));
+            if (param.empty() || param == "void") continue;
+            if (param.find('[') != std::string::npos) {
+                usable = false;
+                break;
+            }
+            std::string type;
+            usize       pos { 0 };
+            while (pos < param.size()) {
+                const auto word_begin = param.find_first_not_of(" \t\r\n", pos);
+                if (word_begin == std::string::npos) break;
+                const auto        word_end = param.find_first_of(" \t\r\n", word_begin);
+                const std::string word     = param.substr(word_begin, word_end - word_begin);
+                pos                        = word_end;
+                if (word == "in" || word == "out" || word == "inout" || word == "const" ||
+                    word == "highp" || word == "mediump" || word == "lowp" || word == "flat" ||
+                    word == "smooth" || word == "noperspective" || word == "centroid")
+                    continue;
+                type = TypeWidth(word) > 0 ? word : std::string {};
+                break;
+            }
+            if (type.empty()) {
+                usable = false; // struct, matrix or unknown parameter type
+                break;
+            }
+            types.push_back(type);
+        }
+        if (! usable) {
+            overloaded.insert(name);
+            continue;
+        }
+        const auto [pos, inserted] = params.emplace(name, types);
+        if (! inserted && pos->second != types) overloaded.insert(name);
+    }
+    for (const auto& name : overloaded) params.erase(name);
+    return params;
+}
+
+inline std::string FixImplicitCalls(const std::string&           src,
+                                    const std::set<std::string>& link_mismatch) {
+    std::string result { src };
+    auto        decl_widths = [&result] {
+        return CollectDeclWidths(result);
+    };
+
+    // texture() takes a vec2 coordinate; HLSL truncates a wider one.
+    {
+        const auto            widths = decl_widths();
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"((?:texture|textureLod)\s*\()");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            const usize open  = (usize)(*it).position() + (usize)(*it).length() - 1;
+            const usize close = FindMatch(result, open);
+            if (close == std::string::npos) continue;
+            const std::string args  = result.substr(open + 1, close - open - 1);
+            const auto        parts = SplitTopLevel(args);
+            if (parts.size() != 2) continue;
+            const auto& [cbegin, cend] = parts[1];
+            const std::string coord    = args.substr(cbegin, cend - cbegin);
+            const ChainScan   scan     = ScanChain(coord, widths);
+            if (! scan.ok || scan.width <= 2) continue;
+            bool narrowable { true };
+            for (const auto& atom : scan.atoms)
+                if (atom.width > 2 && ! atom.swizzlable) narrowable = false;
+            if (! narrowable) continue;
+            std::vector<TextEdit> coord_edits;
+            for (const auto& atom : scan.atoms) {
+                if (atom.width > 2) coord_edits.push_back({ atom.end, atom.end, ".xy" });
+            }
+            edits.push_back({ open + 1 + cbegin, open + 1 + cend, ApplyEdits(coord, coord_edits) });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // A texture sample assigned to a scalar keeps its first component in HLSL.
+    {
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"((?:float|int|uint)\s+(\w+)\s*=\s*)"
+                                 R"((texture|textureLod)\s*\()");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            const usize call_begin = (usize)(*it).position(2);
+            const usize open       = (usize)(*it).position() + (usize)(*it).length() - 1;
+            const usize close      = FindMatch(result, open);
+            if (close == std::string::npos) continue;
+            usize tail = close + 1;
+            while (tail < result.size() && std::isspace((unsigned char)result[tail])) tail++;
+            if (tail >= result.size() || (result[tail] != ';' && result[tail] != ',')) continue;
+            edits.push_back({ call_begin, call_begin, "(" });
+            edits.push_back({ close + 1, close + 1, ").x" });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // A declaration converts its initialiser to the declared width: a scalar
+    // initialiser is broadcast, a wider one is truncated.
+    {
+        const auto            widths = decl_widths();
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"((float|vec2|vec3|vec4)\s+([A-Za-z_]\w*)\s*=\s*)");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            const int   target = TypeWidth((*it)[1].str());
+            const usize begin  = (usize)(*it).position() + (usize)(*it).length();
+            usize       end    = begin;
+            int         depth { 0 };
+            for (; end < result.size(); ++end) {
+                const char c = result[end];
+                if (depth == 0 && (c == ',' || c == ';')) break;
+                if (c == '(' || c == '[') depth++;
+                if (c == ')' || c == ']') depth--;
+                if (depth < 0 || c == '{' || c == '}') break;
+            }
+            if (end >= result.size() || (result[end] != ',' && result[end] != ';') || depth != 0)
+                continue;
+            const std::string init = result.substr(begin, end - begin);
+            const ChainScan   scan = ScanChain(init, widths);
+            if (! scan.ok || scan.width == target) continue;
+            if (scan.width < target) {
+                if (scan.width != 1) continue;
+                edits.push_back({ begin, begin, (*it)[1].str() + "(" });
+                edits.push_back({ end, end, ")" });
+                continue;
+            }
+            std::string narrowed;
+            usize       last { 0 };
+            bool        skip { false };
+            for (const auto& atom : scan.atoms) {
+                if (atom.width <= target) continue;
+                if (! atom.swizzlable) {
+                    skip = true;
+                    break;
+                }
+                narrowed.append(init, last, atom.begin - last);
+                narrowed.append(init, atom.begin, atom.end - atom.begin);
+                narrowed += NarrowSwizzle(target);
+                last = atom.end;
+            }
+            if (skip) continue;
+            narrowed.append(init, last, std::string::npos);
+            edits.push_back({ begin, end, narrowed });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // HLSL truncates a wider argument to a function's vector parameter.
+    {
+        std::vector<std::pair<usize, usize>> spans;
+        const auto                           params = CollectFunctionParams(result, spans);
+        if (! params.empty()) {
+            const auto            widths = decl_widths();
+            std::vector<TextEdit> edits;
+            const std::regex      call(R"((\w+)\s*\()");
+            for (auto it = std::sregex_iterator(result.begin(), result.end(), call);
+                 it != std::sregex_iterator();
+                 ++it) {
+                const auto found = params.find((*it)[1].str());
+                if (found == params.end()) continue;
+                const usize begin { (usize)(*it).position() };
+                if (! AtTokenStart(result, begin)) continue;
+                bool in_signature { false };
+                for (const auto& span : spans) {
+                    if (begin >= span.first && begin < span.second) in_signature = true;
+                }
+                if (in_signature) continue;
+                const usize open  = begin + (usize)(*it).length() - 1;
+                const usize close = FindMatch(result, open);
+                if (close == std::string::npos) continue;
+                const std::string args  = result.substr(open + 1, close - open - 1);
+                const auto        parts = SplitTopLevel(args);
+                if (parts.size() != found->second.size()) continue;
+                std::vector<TextEdit> arg_edits;
+                for (usize i = 0; i < parts.size(); i++) {
+                    const auto& param = found->second[i];
+                    const int   width = TypeWidth(param);
+                    if (width < 2) continue;
+                    const std::string arg =
+                        TrimSpace(args.substr(parts[i].first, parts[i].second - parts[i].first));
+                    const ChainScan scan = ScanChain(arg, widths);
+                    if (! scan.ok || scan.width <= width) continue;
+                    arg_edits.push_back(
+                        { parts[i].first, parts[i].second, param + "(" + arg + ")" });
+                }
+                if (arg_edits.empty()) continue;
+                edits.push_back({ open + 1, close, ApplyEdits(args, arg_edits) });
+            }
+            if (! edits.empty()) result = ApplyEdits(result, edits);
+        }
+    }
+
+    // mix() wants both of its first arguments at one width; HLSL converts one.
+    {
+        const auto            widths = decl_widths();
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"(mix\s*\()");
+        const std::regex      ident(R"(^[A-Za-z_]\w*$)");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            const usize open  = (usize)(*it).position() + (usize)(*it).length() - 1;
+            const usize close = FindMatch(result, open);
+            if (close == std::string::npos) continue;
+            const std::string args  = result.substr(open + 1, close - open - 1);
+            const auto        parts = SplitTopLevel(args);
+            if (parts.size() != 3) continue;
+            const std::string first =
+                TrimSpace(args.substr(parts[0].first, parts[0].second - parts[0].first));
+            const std::string second =
+                TrimSpace(args.substr(parts[1].first, parts[1].second - parts[1].first));
+            if (! std::regex_match(first, ident) || ! std::regex_match(second, ident)) continue;
+            const auto fit = widths.find(first);
+            const auto sit = widths.find(second);
+            if (fit == widths.end() || sit == widths.end()) continue;
+            if (fit->second <= 0 || sit->second <= 0 || fit->second == sit->second) continue;
+            std::vector<TextEdit> arg_edits;
+            if (fit->second == 1) {
+                arg_edits.push_back({ parts[0].first,
+                                      parts[0].second,
+                                      "vec" + std::to_string(sit->second) + "(" + first + ")" });
+            } else if (sit->second == 1) {
+                arg_edits.push_back({ parts[1].first,
+                                      parts[1].second,
+                                      "vec" + std::to_string(fit->second) + "(" + second + ")" });
+            } else if (fit->second > sit->second) {
+                arg_edits.push_back(
+                    { parts[0].second, parts[0].second, NarrowSwizzle(sit->second) });
+            } else {
+                arg_edits.push_back(
+                    { parts[1].second, parts[1].second, NarrowSwizzle(fit->second) });
+            }
+            edits.push_back({ open + 1, close, ApplyEdits(args, arg_edits) });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // A comparison is not a float in GLSL; HLSL converts it to 0.0/1.0.
+    {
+        const auto       widths = decl_widths();
+        const std::regex number(R"(^(?:\d+\.?\d*|\.\d+)$)");
+        auto             is_op = [](char c) {
+            return c != '\0' && std::strchr("*/+-", c) != nullptr;
+        };
+        auto scalar = [&widths, &number](const std::string& token) {
+            if (std::regex_match(token, number)) return true;
+            const auto it = widths.find(token);
+            return it != widths.end() && it->second == 1;
+        };
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"(\(([A-Za-z_]\w*|\d+\.?\d*|\.\d+)\s*(<=|>=|==|!=|<|>)\s*)"
+                                 R"(([A-Za-z_]\w*|\d+\.?\d*|\.\d+)\))");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! scalar((*it)[1].str()) || ! scalar((*it)[3].str())) continue;
+            const usize begin = (usize)(*it).position();
+            const usize end   = begin + (usize)(*it).length();
+            usize       after = end;
+            while (after < result.size() && std::isspace((unsigned char)result[after])) after++;
+            usize before = begin;
+            while (before > 0 && std::isspace((unsigned char)result[before - 1])) before--;
+            const char afterc  = after < result.size() ? result[after] : '\0';
+            const char beforec = before > 0 ? result[before - 1] : '\0';
+            if (! is_op(afterc) && ! is_op(beforec)) continue;
+            const std::string inner = (*it)[0].str().substr(1, (*it).length() - 2);
+            edits.push_back({ begin, end, "float(" + inner + ")" });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // int i = <float>;  HLSL narrows implicitly, GLSL needs the conversion.
+    {
+        std::set<std::string> floats;
+        const std::regex      fre(R"((?:^|[^\w.])float\s+([A-Za-z_]\w*)(?=\s*[;,=)]))",
+                                  std::regex::ECMAScript | std::regex::multiline);
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), fre);
+             it != std::sregex_iterator();
+             ++it)
+            floats.insert((*it)[1].str());
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"(int\s+(\w+)\s*=\s*([A-Za-z_]\w*)\s*;)");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            if (floats.count((*it)[2].str()) == 0) continue;
+            edits.push_back({ (usize)(*it).position(),
+                              (usize)(*it).position() + (usize)(*it).length(),
+                              "int " + (*it)[1].str() + " = int(" + (*it)[2].str() + ");" });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // An assignment converts its right side to the target width too.
+    {
+        const auto            widths = decl_widths();
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"(([A-Za-z_]\w*)\s*(=(?!=)|\+=|-=|\*=|/=))");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            const auto found = widths.find((*it)[1].str());
+            if (found == widths.end() || found->second < 2) continue;
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            const usize begin = (usize)(*it).position();
+            // a declaration is handled above, not here
+            usize before = begin;
+            while (before > 0 && std::isspace((unsigned char)result[before - 1])) before--;
+            usize word = before;
+            while (word > 0 &&
+                   (std::isalnum((unsigned char)result[word - 1]) || result[word - 1] == '_'))
+                word--;
+            if (word < before && TypeWidth(result.substr(word, before - word)) > 0) continue;
+            const usize rhs_begin = (usize)(*it).position() + (usize)(*it).length();
+            usize       end       = rhs_begin;
+            int         depth { 0 };
+            for (; end < result.size(); ++end) {
+                const char c = result[end];
+                if (depth == 0 && c == ';') break;
+                if (c == '(' || c == '[') depth++;
+                if (c == ')' || c == ']') depth--;
+                if (depth < 0 || c == '{' || c == '}') break;
+            }
+            if (end >= result.size() || result[end] != ';' || depth != 0) continue;
+            const std::string rhs  = result.substr(rhs_begin, end - rhs_begin);
+            const ChainScan   scan = ScanChain(rhs, widths);
+            if (! scan.ok || scan.width <= found->second) continue;
+            std::vector<TextEdit> rhs_edits;
+            bool                  skip { false };
+            for (const auto& atom : scan.atoms) {
+                if (atom.width <= found->second) continue;
+                if (! atom.swizzlable) {
+                    skip = true;
+                    break;
+                }
+                rhs_edits.push_back({ atom.end, atom.end, NarrowSwizzle(found->second) });
+            }
+            if (skip) continue;
+            edits.push_back({ rhs_begin, end, ApplyEdits(rhs, rhs_edits) });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // A bare number is not a bool; HLSL treats a non zero one as true.
+    {
+        std::vector<TextEdit> edits;
+        const std::regex      re(R"((\d+(?:\.\d*)?)[ \t]*\?)");
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), re);
+             it != std::sregex_iterator();
+             ++it) {
+            usize k = (usize)(*it).position(1);
+            while (k > 0 && std::isspace((unsigned char)result[k - 1])) k--;
+            if (k > 0) {
+                const char previous = result[k - 1];
+                if (previous == '=') {
+                    usize k2 = k - 1;
+                    while (k2 > 0 && std::isspace((unsigned char)result[k2 - 1])) k2--;
+                    if (k2 > 0 && std::strchr("<>!=", result[k2 - 1]) != nullptr) continue;
+                } else if (std::strchr(";(,?:", previous) == nullptr) {
+                    continue;
+                }
+            }
+            const std::string literal = (*it)[1].str();
+            edits.push_back({ (usize)(*it).position(1),
+                              (usize)(*it).position(1) + (usize)(*it).length(1),
+                              std::stod(literal) == 0.0 ? "false" : "true" });
+        }
+        if (! edits.empty()) result = ApplyEdits(result, edits);
+    }
+
+    // A shader input is a read only varying in GLSL but a writable copy in HLSL;
+    // give main() a local copy when the varying is used only there.
+    {
+        const std::regex mainre(R"(void\s+main\s*\(\s*(?:void\s*)?\)\s*\{)");
+        usize            main_count { 0 };
+        usize            main_open { 0 };
+        for (auto it = std::sregex_iterator(result.begin(), result.end(), mainre);
+             it != std::sregex_iterator();
+             ++it) {
+            if (! AtTokenStart(result, (usize)(*it).position())) continue;
+            main_count++;
+            main_open = (usize)(*it).position() + (usize)(*it).length() - 1;
+        }
+        const usize main_close = main_count == 1 ? FindMatch(result, main_open) : std::string::npos;
+        if (main_close != std::string::npos) {
+            const std::regex      decl(R"((^|\n)[ \t]*(?:(?:smooth|flat|noperspective|centroid))"
+                                       R"([ \t]+)*in[ \t]+(float|vec2|vec3|vec4|int|uint|bool))"
+                                       R"([ \t]+([A-Za-z_]\w*)[ \t]*;)",
+                                       std::regex::ECMAScript | std::regex::multiline);
+            std::vector<TextEdit> edits;
+            std::string           locals;
+            for (auto it = std::sregex_iterator(result.begin(), result.end(), decl);
+                 it != std::sregex_iterator();
+                 ++it) {
+                const std::string type = (*it)[2].str();
+                const std::string name = (*it)[3].str();
+                if (result.find(name + "_hlsl_in") != std::string::npos) continue;
+                // every use but the declaration must be inside main
+                bool             inside_only { true };
+                usize            uses { 0 };
+                const std::regex use(name + R"((?![\w]))");
+                for (auto uit = std::sregex_iterator(result.begin(), result.end(), use);
+                     uit != std::sregex_iterator();
+                     ++uit) {
+                    const usize pos = (usize)uit->position();
+                    if (! AtTokenStart(result, pos)) continue;
+                    if (pos >= (usize)(*it).position(3) &&
+                        pos < (usize)(*it).position(3) + name.size())
+                        continue;
+                    uses++;
+                    if (pos <= main_open || pos >= main_close) inside_only = false;
+                }
+                if (! inside_only || uses == 0) continue;
+                // the name must not be declared anywhere else either (a local of
+                // the same name would collide with the injected copy)
+                const std::regex other(R"((?:float|int|uint|bool|double|vec[234])\s+)" + name +
+                                       R"(\s*[;,=)])");
+                usize            declared { 0 };
+                for (auto oit = std::sregex_iterator(result.begin(), result.end(), other);
+                     oit != std::sregex_iterator();
+                     ++oit) {
+                    if (! AtTokenStart(result, (usize)oit->position())) continue;
+                    declared++;
+                }
+                if (declared != 1) continue;
+                const std::regex write(R"((^|[^\w.]))" + name +
+                                       R"(\s*(?:\.\s*[xyzwrgba]{1,4}\s*)?)"
+                                       R"((?:=(?!=)|\+=|-=|\*=|/=|%=))");
+                if (! std::regex_search(result, write) && link_mismatch.count(name) == 0) continue;
+                edits.push_back({ (usize)(*it).position(3),
+                                  (usize)(*it).position(3) + name.size(),
+                                  name + "_hlsl_in" });
+                locals += "\n    " + type + " " + name + " = " + name + "_hlsl_in;";
+            }
+            if (! locals.empty()) {
+                edits.push_back({ main_open + 1, main_open + 1, locals });
+                result = ApplyEdits(result, edits);
+            }
+        }
+    }
+
+    return result;
+}
+
 // Fix HLSL->GLSL implicit type conversion issues.
 // HLSL allows implicit float<->int conversions, GLSL/SPIR-V does not.
-inline std::string FixImplicitConversions(const std::string& src) {
+inline std::string FixImplicitConversions(const std::string&           src,
+                                          const std::set<std::string>& link_mismatch) {
     std::string result = src;
 
     // Fix: "float VAR = int(EXPR)" -> "int VAR = int(EXPR)"
@@ -775,7 +1501,7 @@ inline std::string FixImplicitConversions(const std::string& src) {
         result = std::regex_replace(result, re, "float $1 = $2;");
     }
 
-    return result;
+    return FixImplicitCalls(result, link_mismatch);
 }
 
 inline std::string GenSha1(std::span<const WPShaderUnit> units) {
@@ -890,7 +1616,21 @@ bool WPShaderParser::CompileToSpv(std::string_view scene_id, std::span<WPShaderU
                 i + 1 < units.size() ? &units[i + 1].preprocess_info : nullptr;
 
             unit.src = Finalprocessor(unit, pre_info, post_info);
-            unit.src = FixImplicitConversions(unit.src);
+            // A varying that the two stages declare at different widths is
+            // matched by name and rejected by glslang; give the fragment its own
+            // copy so the stages match by location, which is what DirectX did.
+            std::set<std::string> link_mismatch;
+            if (pre_info != nullptr) {
+                for (const auto& [name, vdecl] : pre_info->output) {
+                    const auto found = unit.preprocess_info.input.find(name);
+                    if (found == unit.preprocess_info.input.end()) continue;
+                    const int vertex_width   = DeclWidth(vdecl);
+                    const int fragment_width = DeclWidth(found->second);
+                    if (vertex_width > 0 && fragment_width > 0 && vertex_width != fragment_width)
+                        link_mismatch.insert(name);
+                }
+            }
+            unit.src = FixImplicitConversions(unit.src, link_mismatch);
 
             vunit.src   = unit.src;
             vunit.stage = ToGLSL(unit.stage);

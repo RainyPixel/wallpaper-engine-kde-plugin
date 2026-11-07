@@ -1371,13 +1371,15 @@ void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
             continue;
         }
         auto carrier = carrier_of.find(entry.group);
-        if (carrier != carrier_of.end()) {
+        if (carrier != carrier_of.end())
             carrier->second->AppendChild(entry.node);
-            // The carrier sits at its parent's position, not at this object's position.
-            entry.node->SetReposition();
-        } else {
+        else
             node_of.at(entry.group)->AppendChild(entry.node);
-        }
+        // Group nodes are appended to entrys after all the objects, so a tree walk
+        // reaches their children at the group's tree position (after every detached
+        // sibling) instead of at each child's scene.json index. Mark every grouped
+        // child for reinsertion at its own object position.
+        entry.node->SetReposition();
     }
 
     // world transform of each node, needed to place grouped image effect output outside the graph

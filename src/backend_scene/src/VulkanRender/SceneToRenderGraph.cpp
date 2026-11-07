@@ -220,11 +220,12 @@ std::unique_ptr<rg::RenderGraph> wallpaper::sceneToRenderGraph(Scene& scene) {
     scene.rt_write_count.clear();
     std::unique_ptr<rg::RenderGraph> rgraph = std::make_unique<rg::RenderGraph>();
     ExtraInfo                        extra { .rgraph = rgraph.get(), .scene = &scene };
-    // Wallpaper Engine draws objects in scene.json array order. A carrier stands in for a
-    // detached effect-bearing parent, so its children are traversed at the carrier's
-    // position instead of their own and can be covered by the parent's final composite.
-    // Put only those children back at their object position; every other node keeps the
-    // established tree order (some effects sample the framebuffer and depend on it).
+    // Wallpaper Engine draws objects in scene.json array order. Node children of a
+    // group (a transform-only group, or a carrier standing in for a detached
+    // effect-bearing parent) are reached at the group's tree position, which is after
+    // every detached sibling, so later layers can wrongly cover earlier ones. Put only
+    // those grouped children back at their own object position; every other node keeps
+    // the established tree order (some effects sample the framebuffer and depend on it).
     std::vector<SceneNode*> nodes;
     std::vector<SceneNode*> repositioned;
     TraverseNode(

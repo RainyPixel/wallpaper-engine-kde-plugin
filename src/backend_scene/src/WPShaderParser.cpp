@@ -1511,7 +1511,17 @@ inline std::string GenSha1(std::span<const WPShaderUnit> units) {
     }
     return utils::genSha1(shas);
 }
-inline std::string GetCachePath(std::string_view scene_id, std::string_view filename) {
+// The cache key hashes only the shader sources, so the compiled SPIR-V is valid
+// for every scene that uses the same shader. Wallpaper Engine shares a large set
+// of effect/util shaders across the workshop; keying the cache by scene id made
+// each wallpaper recompile all of them on first load.
+inline std::string GetCachePath(std::string_view filename) {
+    return std::string("/cache/" SHADER_DIR "/") + std::string(filename) + "." SHADER_SUFFIX;
+}
+
+// Caches written before the shared pool existed. Kept as a read-only fallback so
+// an upgrade does not discard them; new results always go to the shared pool.
+inline std::string GetLegacyCachePath(std::string_view scene_id, std::string_view filename) {
     return std::string("/cache/") + std::string(scene_id) + "/" SHADER_DIR "/" +
            std::string(filename) + "." SHADER_SUFFIX;
 }
@@ -1660,20 +1670,24 @@ bool WPShaderParser::CompileToSpv(std::string_view scene_id, std::span<WPShaderU
     bool has_cache_dir = vfs.IsMounted("cache");
 
     if (has_cache_dir) {
-        std::string sha1            = GenSha1(units);
-        std::string cache_file_path = GetCachePath(scene_id, sha1);
+        const std::string sha1        = GenSha1(units);
+        const std::string shared_path = GetCachePath(sha1);
+        const std::string legacy_path = GetLegacyCachePath(scene_id, sha1);
 
-        if (vfs.Contains(cache_file_path)) {
-            auto cache_file = vfs.Open(cache_file_path);
-            if (! cache_file || ! ::LoadShaderFromFile(codes, *cache_file)) {
-                LOG_ERROR("load shader from \'%s\' failed", cache_file_path.c_str());
-                return false;
-            }
-        } else {
-            if (! compile(units, codes)) return false;
-            if (auto cache_file = vfs.OpenW(cache_file_path); cache_file) {
-                ::SaveShaderToFile(codes, *cache_file);
-            }
+        // Shared pool first, then the old per-scene directory. An unreadable
+        // entry must not fail the whole scene: another screen may be writing
+        // the same shader right now, so just recompile that one shader.
+        for (const auto& path : { shared_path, legacy_path }) {
+            if (! vfs.Contains(path)) continue;
+            auto cache_file = vfs.Open(path);
+            if (cache_file && ::LoadShaderFromFile(codes, *cache_file)) return true;
+            LOG_ERROR("load shader from \'%s\' failed, recompiling", path.c_str());
+            codes.clear();
+        }
+
+        if (! compile(units, codes)) return false;
+        if (auto cache_file = vfs.OpenW(shared_path); cache_file) {
+            ::SaveShaderToFile(codes, *cache_file);
         }
         return true;
 

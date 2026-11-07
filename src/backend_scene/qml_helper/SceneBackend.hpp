@@ -2,9 +2,12 @@
 
 #include <QtQuick/QQuickFramebufferObject>
 #include <QtCore/QLoggingCategory>
+#include <QtCore/QSize>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QHoverEvent>
+
+#include <atomic>
 
 #include "SceneWallpaper.hpp"
 
@@ -27,6 +30,10 @@ class SceneObject : public QQuickItem {
     Q_PROPERTY(bool mirrorScene READ mirrorScene WRITE setMirrorScene)
     Q_PROPERTY(QString userProperties READ userProperties WRITE setUserProperties NOTIFY
                    userPropertiesChanged)
+    // The extent, in physical pixels, the current swapchain was actually created with.
+    // No NOTIFY: it is written on the render thread and polled, see
+    // swapchainExtentUnchanged().
+    Q_PROPERTY(QSize swapchainExtent READ swapchainExtent)
 public:
     constexpr static std::string_view CACHE_DIR { "wescene-renderer" };
     static std::string                GetDefaultCachePath();
@@ -53,6 +60,7 @@ public:
     bool    shareGpu() const;
     bool    mirrorScene() const;
     QString userProperties() const;
+    QSize   swapchainExtent() const;
 
     void setFps(int);
     void setFillMode(int);
@@ -74,6 +82,10 @@ public:
     // Send the neutral pointer (screen centre) so parallax eases back when the
     // desktop mouse hook is detached.
     Q_INVOKABLE void centerPointer();
+    // True while the extent the current geometry asks for is still the one the running
+    // swapchain has, i.e. a backend reload would rebuild it at exactly the size it
+    // already uses. Always false before the first swapchain exists.
+    Q_INVOKABLE bool swapchainExtentUnchanged() const;
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
@@ -120,6 +132,12 @@ private:
     bool m_enable_valid { false };
 
     std::shared_ptr<wallpaper::SceneWallpaper> m_scene { nullptr };
+
+    QSize requestedSwapchainExtent() const;
+
+    // Written from updatePaintNode() on the render thread, read from the QML timer on
+    // the GUI thread; atomic so the two dimensions of one creation stay together.
+    std::atomic<QSize> m_swapchain_extent { QSize() };
 
 protected:
     QSGNode* updatePaintNode(QSGNode*, UpdatePaintNodeData*);

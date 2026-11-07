@@ -1259,6 +1259,7 @@ void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
                               i32                               parent) -> i32 {
         SceneNode local(
             Vector3f(node->Translate().data()), Vector3f(scale.data()), Vector3f(angles.data()));
+        node->SetDrawOrder((i32)entrys.size());
         entrys.push_back({ node, local.GetLocalTrans(), id, parent, 0 });
         return (i32)entrys.size() - 1;
     };
@@ -1370,10 +1371,13 @@ void BuildObjectNodes(ParseContext& context, const nlohmann::json& json,
             continue;
         }
         auto carrier = carrier_of.find(entry.group);
-        if (carrier != carrier_of.end())
+        if (carrier != carrier_of.end()) {
             carrier->second->AppendChild(entry.node);
-        else
+            // The carrier sits at its parent's position, not at this object's position.
+            entry.node->SetReposition();
+        } else {
             node_of.at(entry.group)->AppendChild(entry.node);
+        }
     }
 
     // world transform of each node, needed to place grouped image effect output outside the graph

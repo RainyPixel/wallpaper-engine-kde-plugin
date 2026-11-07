@@ -60,6 +60,17 @@ public:
 
     i32& ID() { return m_id; }
 
+    // Index in scene.json's "objects" array, i.e. Wallpaper Engine's draw order.
+    // Used to place carrier children back at their own position when the tree
+    // would otherwise draw them at the carrier's position.
+    i32  DrawOrder() const { return m_draw_order; }
+    void SetDrawOrder(i32 order) { m_draw_order = order; }
+
+    // Set on nodes attached to a carrier: their tree position is the carrier's,
+    // not their own object position, so the render graph has to put them back.
+    bool NeedReposition() const { return m_reposition; }
+    void SetReposition() { m_reposition = true; }
+
     bool IsOffscreen() const { return m_offscreen; }
     void SetOffscreen(bool v) { m_offscreen = v; }
 
@@ -68,6 +79,8 @@ private:
     void MarkTransDirty();
 
     i32         m_id;
+    i32         m_draw_order { -1 };
+    bool        m_reposition { false };
     bool        m_offscreen { false };
     std::string m_name;
 

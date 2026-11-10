@@ -39,6 +39,13 @@ struct WPMdl {
 
     // std::vector<Eigen::Matrix<float, 3, 4>> bones;
     std::shared_ptr<WPPuppet> puppet;
+    // Bone-index table from the MDLS skeleton ("has_index" section), retained
+    // for reference. It is NOT used by GenPuppetMesh: an earlier attempt to
+    // treat it as a blend-index permutation was disproved (affected models can
+    // carry an identity table, and applying it freezes the lash/lid layers).
+    // GenPuppetMesh derives its correction from animation scale tracks and
+    // vertex-group bounding boxes instead.
+    std::vector<uint32_t> bone_index_map;
     // combo
     // SKINNING = 1
     // BONECOUNT

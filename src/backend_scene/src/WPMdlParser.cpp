@@ -9,6 +9,8 @@
 #include "wpscene/WPMaterial.h"
 #include "WPShaderParser.hpp"
 #include <optional>
+#include <algorithm>
+#include <limits>
 #include <cmath>
 
 using namespace wallpaper;
@@ -232,8 +234,10 @@ bool WPMdlParser::Parse(std::string_view path, fs::VFS& vfs, WPMdl& mdl) try {
 
         uint8_t has_index = f.ReadUint8();
         if (has_index) {
+            mdl.bone_index_map.clear();
+            mdl.bone_index_map.reserve(bones_num);
             for (uint i = 0; i < bones_num; i++) {
-                f.ReadUint32();
+                mdl.bone_index_map.push_back(f.ReadUint32());
             }
         }
     }
@@ -393,13 +397,127 @@ void WPMdlParser::GenPuppetMesh(SceneMesh& mesh, const WPMdl& mdl) {
     // Unused slots in the MDL may carry sentinel values (e.g. 0xFF) with weight=0.
     uint32_t bone_count = mdl.puppet ? (uint32_t)mdl.puppet->bones.size() : 1u;
 
+    // Wallpaper Engine closes an eye by collapsing the scale of the bones that
+    // drive the lid. In some puppets the iris quads are bound to bones whose
+    // animation track never changes scale, so the iris stays fully visible
+    // while the lids and lashes close. Every bone matrix is (near) identity at
+    // rest, so the mistake is invisible in a static frame and only shows up
+    // once a blink drives a scale collapse.
+    //
+    // Derive the correction from the asset data rather than hardcoding ids or
+    // relying on the MDLS has_index permutation (some affected models carry an
+    // identity table):
+    //   closing[c] = scale track varies and reaches < 0.1;
+    //   frozen[b]  = scale track is constant but bone b carries geometry;
+    //   the iris and the lid of one eye are authored as overlapping quads, so
+    //   rebind each frozen layer to the closing bone whose vertex-group
+    //   bounding box overlaps it most (> 0.5 of the smaller box).
+    // Layers that do not overlap a closing layer (brows, decorative arcs) and
+    // hierarchical puppets that bind the root bone are left untouched. The
+    // match must be a strict bijection (one iris layer per closing lid layer);
+    // many-to-one / one-to-many matches indicate a different rig and are left
+    // alone so the fix cannot silently alter unrelated wallpapers.
+    std::vector<uint32_t> bone_remap(bone_count);
+    for (uint32_t i = 0; i < bone_count; i++) bone_remap[i] = i;
+    if (mdl.puppet && bone_count > 2u) {
+        struct BBox {
+            float x0 { std::numeric_limits<float>::max() };
+            float y0 { std::numeric_limits<float>::max() };
+            float x1 { -std::numeric_limits<float>::max() };
+            float y1 { -std::numeric_limits<float>::max() };
+            bool  valid { false };
+        };
+        std::vector<BBox>    boxes(bone_count);
+        std::vector<uint8_t> used(bone_count, 0u);
+        bool                 root_unused = true;
+        for (const auto& v : mdl.vertexs) {
+            for (int j = 0; j < 4; j++) {
+                if (v.weight[j] <= 0.0f) continue;
+                const uint32_t b = v.blend_indices[j];
+                if (b == 0u) root_unused = false;
+                if (b >= bone_count) continue;
+                used[b]   = 1u;
+                auto& box = boxes[b];
+                box.x0    = std::min(box.x0, v.position[0]);
+                box.y0    = std::min(box.y0, v.position[1]);
+                box.x1    = std::max(box.x1, v.position[0]);
+                box.y1    = std::max(box.y1, v.position[1]);
+                box.valid = true;
+            }
+        }
+
+        std::vector<uint8_t> scale_varies(bone_count, 0u);
+        std::vector<float>   min_scale(bone_count, 1.0f);
+        for (const auto& anim : mdl.puppet->anims) {
+            const uint32_t n = std::min<uint32_t>(bone_count, (uint32_t)anim.bframes_array.size());
+            for (uint32_t b = 0; b < n; b++) {
+                const auto& frames = anim.bframes_array[b].frames;
+                if (frames.empty()) continue;
+                const auto& s0 = frames.front().scale;
+                for (const auto& f : frames) {
+                    min_scale[b] = std::min(min_scale[b], f.scale.minCoeff());
+                    if (std::abs(f.scale.x() - s0.x()) > 1.0e-4f ||
+                        std::abs(f.scale.y() - s0.y()) > 1.0e-4f ||
+                        std::abs(f.scale.z() - s0.z()) > 1.0e-4f)
+                        scale_varies[b] = 1u;
+                }
+            }
+        }
+        std::vector<uint32_t> closing;
+        for (uint32_t b = 1; b < bone_count; b++)
+            if (used[b] && scale_varies[b] && min_scale[b] < 0.1f) closing.push_back(b);
+
+        if (root_unused && ! closing.empty()) {
+            auto overlap = [](const BBox& a, const BBox& b) {
+                if (! a.valid || ! b.valid) return 0.0f;
+                const float ix = std::max(0.0f, std::min(a.x1, b.x1) - std::max(a.x0, b.x0));
+                const float iy = std::max(0.0f, std::min(a.y1, b.y1) - std::max(a.y0, b.y0));
+                const float sa = std::max(1.0e-6f, (a.x1 - a.x0) * (a.y1 - a.y0));
+                const float sb = std::max(1.0e-6f, (b.x1 - b.x0) * (b.y1 - b.y0));
+                return (ix * iy) / std::min(sa, sb);
+            };
+            struct Match {
+                uint32_t bone;
+                uint32_t target;
+            };
+            std::vector<Match> matches;
+            for (uint32_t b = 1; b < bone_count; b++) {
+                if (! used[b] || scale_varies[b]) continue;
+                float    best   = 0.5f; // require a real overlap, not just proximity
+                uint32_t target = b;
+                for (uint32_t c : closing) {
+                    const float ov = overlap(boxes[b], boxes[c]);
+                    if (ov > best) {
+                        best   = ov;
+                        target = c;
+                    }
+                }
+                if (target != b) matches.push_back({ b, target });
+            }
+            // Strict bijection: every closing layer is claimed by exactly one
+            // frozen layer. Reject ambiguous rigs rather than guessing.
+            bool                 bijection = matches.size() == closing.size();
+            std::vector<uint8_t> closing_seen(bone_count, 0u);
+            for (const auto& m : matches) {
+                if (closing_seen[m.target]) bijection = false;
+                closing_seen[m.target] = 1u;
+            }
+            for (uint32_t c : closing)
+                if (! closing_seen[c]) bijection = false;
+            if (bijection)
+                for (const auto& m : matches) bone_remap[m.bone] = m.target;
+        }
+    }
+
     std::array<float, 16> one_vert;
-    auto                  to_one = [bone_count](const WPMdl::Vertex& in, decltype(one_vert)& out) {
+    auto to_one = [bone_count, &bone_remap](const WPMdl::Vertex& in, decltype(one_vert)& out) {
         uint offset = 0;
         memcpy(out.data() + 4 * (offset++), in.position.data(), sizeof(in.position));
         std::array<uint32_t, 4> safe_indices;
-        for (int j = 0; j < 4; j++)
-            safe_indices[j] = in.blend_indices[j] < bone_count ? in.blend_indices[j] : 0u;
+        for (int j = 0; j < 4; j++) {
+            uint32_t b      = in.blend_indices[j] < bone_count ? in.blend_indices[j] : 0u;
+            safe_indices[j] = bone_remap[b];
+        }
         memcpy(out.data() + 4 * (offset++), safe_indices.data(), sizeof(safe_indices));
         memcpy(out.data() + 4 * (offset++), in.weight.data(), sizeof(in.weight));
         memcpy(out.data() + 4 * (offset++), in.texcoord.data(), sizeof(in.texcoord));

@@ -1,5 +1,8 @@
 #include "SceneToRenderGraph.hpp"
 
+#include <algorithm>
+#include <vector>
+
 #include "Scene/Scene.h"
 #include "RenderGraph/RenderGraph.hpp"
 #include "SpecTexs.hpp"
@@ -217,11 +220,36 @@ std::unique_ptr<rg::RenderGraph> wallpaper::sceneToRenderGraph(Scene& scene) {
     scene.rt_write_count.clear();
     std::unique_ptr<rg::RenderGraph> rgraph = std::make_unique<rg::RenderGraph>();
     ExtraInfo                        extra { .rgraph = rgraph.get(), .scene = &scene };
+    // Wallpaper Engine draws objects in scene.json array order. Node children of a
+    // group (a transform-only group, or a carrier standing in for a detached
+    // effect-bearing parent) are reached at the group's tree position, which is after
+    // every detached sibling, so later layers can wrongly cover earlier ones. Put only
+    // those grouped children back at their own object position; every other node keeps
+    // the established tree order (some effects sample the framebuffer and depend on it).
+    std::vector<SceneNode*> nodes;
+    std::vector<SceneNode*> repositioned;
     TraverseNode(
-        [&extra](SceneNode* node) {
-            ToGraphPass(node, SpecTex_Default, node->ID(), extra);
+        [&](SceneNode* node) {
+            (node->NeedReposition() ? repositioned : nodes).push_back(node);
         },
         scene.sceneGraph.get());
+    if (! repositioned.empty()) {
+        std::stable_sort(repositioned.begin(), repositioned.end(), [](SceneNode* a, SceneNode* b) {
+            return a->DrawOrder() < b->DrawOrder();
+        });
+        std::vector<SceneNode*> merged;
+        merged.reserve(nodes.size() + repositioned.size());
+        usize next = 0;
+        for (auto* node : nodes) {
+            while (next < repositioned.size() &&
+                   repositioned[next]->DrawOrder() < node->DrawOrder())
+                merged.push_back(repositioned[next++]);
+            merged.push_back(node);
+        }
+        while (next < repositioned.size()) merged.push_back(repositioned[next++]);
+        nodes.swap(merged);
+    }
+    for (auto* node : nodes) ToGraphPass(node, SpecTex_Default, node->ID(), extra);
 
     for (auto& info : extra.link_info) {
         if (! exists(extra.id_link_map, info.link_id)) {

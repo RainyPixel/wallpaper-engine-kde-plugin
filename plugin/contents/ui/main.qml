@@ -373,15 +373,35 @@ Rectangle {
         height: spanning ? desktop.height : parent.height
         property var item: null
 
-        // Scene framebuffers take their size at creation; wait for geometry to settle.
+        // Scene framebuffers take their size at creation, so a geometry change has to
+        // rebuild the backend and the timer debounces that. Startup geometry settles
+        // *after* the first load, which used to force a second, identical full load:
+        // ask the running backend first and reload only when the extent it built its
+        // swapchain with is no longer the one the current geometry asks for. Any doubt
+        // (nothing to ask) keeps the reload — a stale size is worse than a stall.
         onWidthChanged: sceneResizeTimer.restart()
         onHeightChanged: sceneResizeTimer.restart()
+        // The SceneObject sits inside the backend component, so find it by the query it
+        // answers instead of by type. Returns null when the backend has no swapchain yet.
+        function sceneViewer() {
+            const root = backendLoader.item;
+            if(!root) return null;
+            const items = root.children;
+            for(let i = 0; i < items.length; i++)
+                if(typeof items[i].swapchainExtentUnchanged === 'function')
+                    return items[i];
+            return null;
+        }
         Timer {
             id: sceneResizeTimer
             interval: 100
             onTriggered: {
-                if(backendLoader.item && background.wallpaperType === 'scene')
-                    background.loadBackend();
+                if(!backendLoader.item || background.wallpaperType !== 'scene')
+                    return;
+                const viewer = backendLoader.sceneViewer();
+                if(viewer && viewer.swapchainExtentUnchanged())
+                    return;
+                background.loadBackend();
             }
         }
 

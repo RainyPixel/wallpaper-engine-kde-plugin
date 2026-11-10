@@ -146,7 +146,9 @@ void WPShaderValueUpdater::UpdateUniforms(SceneNode* pNode, sprite_map_t& sprite
         if (hasNodeData && cam_name != "effect") {
             const auto& nodeData = m_nodeDataMap.at(pNode);
             if (m_parallax.enable) {
-                Vector3f nodePos = pNode->Translate();
+                // World position: a node's own Translate() is local once it is parented
+                // into a group, so parallax would otherwise drift by the group offset.
+                Vector3f nodePos = pNode->ModelTrans().block<3, 1>(0, 3).cast<float>();
                 Vector2f depth(&nodeData.parallaxDepth[0]);
                 Vector2f ortho { (float)m_scene->ortho[0], (float)m_scene->ortho[1] };
                 // flip mouse y axis

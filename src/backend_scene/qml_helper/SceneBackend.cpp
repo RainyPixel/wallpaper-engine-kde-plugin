@@ -17,9 +17,12 @@
 #endif
 
 #include <clocale>
+#include <algorithm>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <functional>
+#include <limits>
 
 #include "glExtra.hpp"
 #include "SceneWallpaper.hpp"
@@ -54,6 +57,22 @@ QSGTexture* createTextureFromGl(uint32_t handle, QSize size, QQuickWindow* windo
 #else
     return window->createTextureFromId(handle, size);
 #endif
+}
+
+// QQuickItem extents are fractional logical pixels (2560 logical px at 1.5x scale is
+// 1706.6666…), so the exact texel count is a double that must be rounded, not truncated:
+// 2194.2857… * 1.75 is 3839.9999…, and truncating it drops a whole column of the
+// swapchain. The rounding has to break exact ties to even, not away from zero: 1707
+// logical px at 1.5x is exactly 2560.5 on a 2560 wide screen, and std::lround asks for
+// 2561 there. std::nearbyint honours the default round-to-nearest-even mode, so 2560.5
+// gives 2560 while 3839.9999… still gives 3840. Clamp into the uint16_t range the render
+// init accepts so a zero/NaN ratio cannot produce an empty extent and a huge one cannot
+// overflow.
+uint16_t renderExtent(qreal logical, qreal dpr) {
+    const double px = static_cast<double>(logical) * static_cast<double>(dpr);
+    if (! std::isfinite(px) || px <= 0.0) return 1;
+    if (px >= 65535.0) return std::numeric_limits<uint16_t>::max();
+    return static_cast<uint16_t>(std::clamp(std::nearbyint(px), 1.0, 65535.0));
 }
 
 wallpaper::FillMode ToWPFillMode(int fillMode) {
@@ -252,8 +271,12 @@ QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
                 return (QSGTexture*)nullptr;
             });
         if (node->initGl()) {
-            node->initVulkan(width() * window()->devicePixelRatio(),
-                             height() * window()->devicePixelRatio());
+            // Record what the swapchain is created with, so a later geometry change can
+            // tell a real resize from the geometry settling right after the first load.
+            const QSize extent = requestedSwapchainExtent();
+            m_swapchain_extent = extent;
+            node->initVulkan(static_cast<uint16_t>(extent.width()),
+                             static_cast<uint16_t>(extent.height()));
 
             connect(
                 node, &TextureNode::redraw, window(), &QQuickWindow::update, Qt::QueuedConnection);
@@ -268,6 +291,19 @@ QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
 
     node->setRect(boundingRect());
     return node;
+}
+
+QSize SceneObject::swapchainExtent() const { return m_swapchain_extent.load(); }
+
+QSize SceneObject::requestedSwapchainExtent() const {
+    const qreal dpr = window() ? window()->devicePixelRatio() : 1.0;
+    return QSize(renderExtent(width(), dpr), renderExtent(height(), dpr));
+}
+
+bool SceneObject::swapchainExtentUnchanged() const {
+    const QSize created = swapchainExtent();
+    if (! created.isValid()) return false;
+    return created == requestedSwapchainExtent();
 }
 
 #define SET_PROPERTY(type, name, value) m_scene->setProperty##type(name, value);

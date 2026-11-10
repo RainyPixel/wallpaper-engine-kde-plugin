@@ -270,6 +270,10 @@ private:
     }
     MHANDLER_CMD(DRAW) {
         frame_timer.FrameBegin();
+        if (! m_scene) {
+            frame_timer.FrameEnd();
+            return;
+        }
         if (m_mirror) {
             if (m_render->mirrorLost()) {
                 // Primary went away: rebuild our graph and re-run the election;

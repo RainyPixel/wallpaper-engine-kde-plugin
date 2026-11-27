@@ -1,7 +1,7 @@
 #pragma once
-#include "effolkronium/random.hpp"
+#include "ilqvya/random.hpp"
 
 namespace wallpaper
 {
-using Random = effolkronium::random_thread_local;
+using Random = ilqvya::random_thread_local;
 } // namespace wallpaper

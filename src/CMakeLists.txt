@@ -19,6 +19,7 @@ add_library(${PROJECT_NAME}
 	SteamPaths.cpp
 	GamemodeMonitor.cpp
 	WallpaperSyncBus.cpp
+	WallpaperEngineFollower.cpp
 	GlobalConfigStore.cpp
 	qmldir
 )

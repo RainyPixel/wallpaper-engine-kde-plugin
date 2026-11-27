@@ -16,11 +16,11 @@ public:
         }
         vk::DescriptorSetLayoutCreateInfo info;
         VkDescriptorSetLayoutCreateInfo   create_info {
-              .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-              .pNext        = nullptr,
-              .flags        = {},
-              .bindingCount = (uint32_t)m_bindings.size(),
-              .pBindings    = m_bindings.data(),
+            .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .pNext        = nullptr,
+            .flags        = {},
+            .bindingCount = (uint32_t)m_bindings.size(),
+            .pBindings    = m_bindings.data(),
         };
         create_info.bindingCount = m_bindings.size();
 

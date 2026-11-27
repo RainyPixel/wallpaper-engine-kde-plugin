@@ -368,6 +368,14 @@ bool wallpaper::vulkan::GenReflect(std::span<const std::vector<uint>> codes,
                         // bunif.num = GetTypeNum(type);
                         bunif.size   = unif.size;
                         bunif.offset = unif.offset;
+                        if (unif.array.dims_count == 1 && unif.type_description &&
+                            (unif.type_description->type_flags & SPV_REFLECT_TYPE_FLAG_FLOAT) &&
+                            unif.numeric.scalar.width == 32 &&
+                            unif.numeric.vector.component_count <= 1 &&
+                            unif.numeric.matrix.column_count == 0) {
+                            bunif.num                 = unif.array.dims[0];
+                            bunif.scalar_array_stride = unif.array.stride;
+                        }
                     }
                     ref_block.member_map[unif.name] = bunif;
                 }

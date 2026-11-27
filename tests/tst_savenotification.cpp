@@ -48,7 +48,7 @@ private slots:
 
     void requestOutlivesHelper() {
         Notifications receiver;
-        auto          bus = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
+        auto bus = QDBusConnection::connectToBus(QDBusConnection::SessionBus,
                                                  QStringLiteral("notification-test-server"));
         QVERIFY(bus.isConnected());
         QVERIFY(bus.baseService() != QDBusConnection::sessionBus().baseService());

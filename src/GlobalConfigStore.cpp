@@ -15,7 +15,16 @@ using namespace wekde;
 namespace
 {
 constexpr auto k_enabled_key = "enabled";
+
+QStringList changedKeys(const QVariantMap& previous, const QVariantMap& updated) {
+    QStringList keys;
+    for (auto it = previous.constBegin(); it != previous.constEnd(); ++it)
+        if (! updated.contains(it.key())) keys << it.key();
+    for (auto it = updated.constBegin(); it != updated.constEnd(); ++it)
+        if (previous.value(it.key()) != it.value()) keys << it.key();
+    return keys;
 }
+} // namespace
 
 Q_GLOBAL_STATIC(GlobalConfigBackend, g_backend)
 
@@ -81,31 +90,33 @@ bool GlobalConfigBackend::setValue(const QString& key, const QVariant& val) {
 }
 
 bool GlobalConfigBackend::setValues(const QVariantMap& patch) {
-    QStringList changedKeys;
+    if (patch.isEmpty()) return true;
+    QStringList changes;
     QVariantMap updated;
     QString     error;
     bool        saved;
     {
         QWriteLocker locker(&m_lock);
-        updated = m_data;
-        for (auto it = patch.constBegin(); it != patch.constEnd(); ++it) {
-            if (updated.value(it.key()) != it.value()) {
+        QVariantMap  disk;
+        saved = readFromDisk(disk, error);
+        if (saved) {
+            updated = disk;
+            for (auto it = patch.constBegin(); it != patch.constEnd(); ++it)
                 updated.insert(it.key(), it.value());
-                changedKeys << it.key();
-            }
+            saved = updated == disk || persist(updated, error);
         }
-        if (changedKeys.isEmpty()) return true;
-        QVariantMap disk;
-        saved = readFromDisk(disk, error) && persist(updated, error);
-        if (saved) m_data = updated;
+        if (saved) {
+            changes = changedKeys(m_data, updated);
+            m_data  = updated;
+        }
     }
     if (! saved) {
         qWarning() << "GlobalConfigBackend: cannot save" << filePath() << error;
         emit persistenceFailed(error);
         return false;
     }
-    for (const auto& key : changedKeys) emit changed(key, updated.value(key));
-    if (changedKeys.contains(k_enabled_key)) emit enabledChanged();
+    for (const auto& key : changes) emit changed(key, updated.value(key));
+    if (changes.contains(k_enabled_key)) emit enabledChanged();
     return true;
 }
 
@@ -117,20 +128,15 @@ bool GlobalConfigBackend::reloadFromDisk() {
         emit persistenceFailed(error);
         return false;
     }
-    QStringList changedKeys;
+    QStringList changes;
     {
         QWriteLocker locker(&m_lock);
-        // keys removed on disk
-        for (auto it = m_data.constBegin(); it != m_data.constEnd(); ++it)
-            if (! fresh.contains(it.key())) changedKeys << it.key();
-        // added/modified keys
-        for (auto it = fresh.constBegin(); it != fresh.constEnd(); ++it)
-            if (m_data.value(it.key()) != it.value()) changedKeys << it.key();
-        if (changedKeys.isEmpty()) return true;
+        changes = changedKeys(m_data, fresh);
+        if (changes.isEmpty()) return true;
         m_data = fresh;
     }
-    for (const auto& key : changedKeys) emit changed(key, fresh.value(key));
-    if (changedKeys.contains(k_enabled_key)) emit enabledChanged();
+    for (const auto& key : changes) emit changed(key, fresh.value(key));
+    if (changes.contains(k_enabled_key)) emit enabledChanged();
     return true;
 }
 

@@ -9,6 +9,7 @@
 #include "FileHelper.hpp"
 #include "GamemodeMonitor.hpp"
 #include "WallpaperSyncBus.hpp"
+#include "WallpaperEngineFollower.hpp"
 #include "GlobalConfigStore.hpp"
 
 constexpr std::array<uint, 2> WPVer { 1, 2 };
@@ -29,6 +30,8 @@ public:
         qmlRegisterType<wekde::FileHelper>(uri, WPVer[0], WPVer[1], "FileHelper");
         qmlRegisterType<wekde::GamemodeMonitor>(uri, WPVer[0], WPVer[1], "GamemodeMonitor");
         qmlRegisterType<wekde::WallpaperSyncBus>(uri, WPVer[0], WPVer[1], "WallpaperSyncBus");
+        qmlRegisterType<wekde::WallpaperEngineFollower>(
+            uri, WPVer[0], WPVer[1], "WallpaperEngineFollower");
         qmlRegisterType<wekde::GlobalConfig>(uri, WPVer[0], WPVer[1], "GlobalConfig");
     }
 };

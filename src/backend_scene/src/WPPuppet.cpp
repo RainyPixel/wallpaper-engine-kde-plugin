@@ -1,4 +1,6 @@
 #include "WPPuppet.hpp"
+
+#include <cassert>
 #include <cmath>
 #include "Utils/Logging.h"
 
@@ -42,19 +44,23 @@ void WPPuppet::prepared() {
 
 std::span<const Eigen::Affine3f> WPPuppet::genFrame(WPPuppetLayer& puppet_layer,
                                                     double         time) noexcept {
+    EvaluateFrame(puppet_layer, time, m_final_affines);
+    return m_final_affines;
+}
+
+void WPPuppet::EvaluateFrame(WPPuppetLayer& puppet_layer, double time,
+                             std::span<Eigen::Affine3f> affines) const noexcept {
     double global_blend = puppet_layer.m_global_blend;
-    double total_blend  = puppet_layer.m_total_blend;
 
     puppet_layer.updateInterpolation(time);
 
-    for (uint i = 0; i < m_final_affines.size(); i++) {
+    for (usize i = 0; i < affines.size(); ++i) {
         const auto& bone   = bones[i];
-        auto&       affine = m_final_affines[i];
+        auto&       affine = affines[i];
 
         affine = Affine3f::Identity();
         assert(bone.parent < i || bone.noParent());
-        const Affine3f parent =
-            bone.noParent() ? Affine3f::Identity() : m_final_affines[bone.parent];
+        const Affine3f parent = bone.noParent() ? Affine3f::Identity() : affines[bone.parent];
 
         Vector3f    trans { bone.transform.translation() * global_blend };
         Vector3f    scale { Vector3f::Ones() * global_blend };
@@ -109,10 +115,9 @@ std::span<const Eigen::Affine3f> WPPuppet::genFrame(WPPuppetLayer& puppet_layer,
         affine = parent * affine;
     }
 
-    for (uint i = 0; i < m_final_affines.size(); i++) {
-        m_final_affines[i] *= bones[i].offset_trans.matrix();
+    for (usize i = 0; i < affines.size(); ++i) {
+        affines[i] *= bones[i].offset_trans.matrix();
     }
-    return m_final_affines;
 }
 
 static constexpr void genInterpolationInfo(WPPuppet::Animation::InterpolationInfo& info,
@@ -145,7 +150,7 @@ WPPuppet::Animation::getInterpolationInfo(double* cur_time) const {
     return _info;
 }
 
-void WPPuppetLayer::prepared(std::span<AnimationLayer> alayers) {
+void WPPuppetLayer::prepared(std::span<const AnimationLayer> alayers) {
     m_layers.resize(alayers.size());
     double& blend       = m_global_blend;
     double& total_blend = m_total_blend;
@@ -190,6 +195,13 @@ void WPPuppetLayer::prepared(std::span<AnimationLayer> alayers) {
 
 std::span<const Eigen::Affine3f> WPPuppetLayer::genFrame(double time) noexcept {
     return m_puppet->genFrame(*this, time);
+}
+
+std::vector<Eigen::Affine3f> WPPuppetLayer::PoseAt(double time) const {
+    auto                         copy = *this;
+    std::vector<Eigen::Affine3f> result(m_puppet->bones.size());
+    m_puppet->EvaluateFrame(copy, time, result);
+    return result;
 }
 
 void WPPuppetLayer::updateInterpolation(double time) noexcept {

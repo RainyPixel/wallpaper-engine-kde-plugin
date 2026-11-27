@@ -23,6 +23,7 @@ ColumnLayout {
     property string cfg_SteamLibraryPath
     property string cfg_WallpaperWorkShopId
     property string cfg_WallpaperSource
+    property string cfg_FollowSteamUser
     property string cfg_FilterStr
     property int    cfg_SortMode
 
@@ -50,6 +51,7 @@ ColumnLayout {
     property int    cfg_VideoBackend
 
     property int    cfg_PerOptChanged: 0
+    signal configurationChanged
 
     //property alias  cfg_UseMpv
     //property string cfg_BackgroundColor: "black"
@@ -141,9 +143,17 @@ ColumnLayout {
     // (possibly stale) per-screen wallpaper back into the shared global config.
     property string initialWallpaperSource
     property string initialWallpaperWorkShopId
+    property bool initialMuteAllWallpapers
+    property bool initialGlobalMode
+    property string initialGlobalFollowSteamUser
+    property var pendingGlobalFollowSteamUser: undefined
     Component.onCompleted: {
         initialWallpaperSource = cfg_WallpaperSource;
         initialWallpaperWorkShopId = cfg_WallpaperWorkShopId;
+        initialMuteAllWallpapers = globalCfg.get("MuteAllWallpapers", false);
+        settingPage.muteAllWallpapers = initialMuteAllWallpapers;
+        initialGlobalMode = globalCfg.enabled;
+        initialGlobalFollowSteamUser = globalCfg.get("FollowSteamUser", "");
         if(globalCfg.enabled)
             cfg_SpanScreens = globalCfg.get("SpanScreens", cfg_SpanScreens);
         // Seed the library from detection, the folder button stays an override.
@@ -154,7 +164,11 @@ ColumnLayout {
 
     function saveConfig() {
         wallpaperPage.saveConfig();
-        const batch = { "enabled": cfg_GlobalMode };
+        const batch = {};
+        if (cfg_GlobalMode !== initialGlobalMode)
+            batch["enabled"] = cfg_GlobalMode;
+        if (settingPage.muteAllWallpapers !== initialMuteAllWallpapers)
+            batch["MuteAllWallpapers"] = settingPage.muteAllWallpapers;
         if(cfg_GlobalMode) {
             Object.assign(batch, {
                 "RandomizeWallpaper":  cfg_RandomizeWallpaper,
@@ -164,6 +178,8 @@ ColumnLayout {
                 "SortMode":            cfg_SortMode,
                 "SpanScreens":         cfg_SpanScreens
             });
+            if (!initialGlobalMode || settingPage.followSteamUser !== initialGlobalFollowSteamUser)
+                batch["FollowSteamUser"] = settingPage.followSteamUser;
             // Only sync the wallpaper itself if the user actually changed the
             // selection this session, so we never overwrite the shared wallpaper
             // with a stale per-screen value.
@@ -176,6 +192,10 @@ ColumnLayout {
         if(globalCfg.setBatch(batch)) {
             initialWallpaperSource = cfg_WallpaperSource;
             initialWallpaperWorkShopId = cfg_WallpaperWorkShopId;
+            initialMuteAllWallpapers = settingPage.muteAllWallpapers;
+            initialGlobalMode = cfg_GlobalMode;
+            initialGlobalFollowSteamUser = globalCfg.get("FollowSteamUser", "");
+            pendingGlobalFollowSteamUser = undefined;
             syncBus.broadcastGlobalChanged();
         }
     }
@@ -233,6 +253,23 @@ ColumnLayout {
 
         SettingPage {
             id: settingPage
+            steamPaths: root.cfg_GlobalMode ? pyext.detect_steam("") : root.steamDetect
+            followSteamUser: {
+                if (!root.cfg_GlobalMode) return root.cfg_FollowSteamUser;
+                if (root.pendingGlobalFollowSteamUser !== undefined)
+                    return root.pendingGlobalFollowSteamUser;
+                return root.initialGlobalMode ? root.initialGlobalFollowSteamUser
+                                              : root.cfg_FollowSteamUser;
+            }
+            onFollowSteamUserEdited: key => {
+                if (root.cfg_GlobalMode)
+                    root.pendingGlobalFollowSteamUser = key;
+                else
+                    root.cfg_FollowSteamUser = key;
+                root.configurationChanged();
+            }
+            onMuteAllWallpapersEdited: root.configurationChanged()
+            onSharedModeEdited: root.configurationChanged()
         }
 
         AboutPage {}

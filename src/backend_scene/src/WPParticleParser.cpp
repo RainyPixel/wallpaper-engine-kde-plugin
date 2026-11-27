@@ -563,8 +563,8 @@ WPParticleParser::genParticleOperatorOp(const nlohmann::json&                   
         } else if (name == "vortex") {
             Vortex v = Vortex::ReadFromJson(wpj);
             return [=](const ParticleInfo& info) {
-                Vector3d offset = info.controlpoints[v.controlpoint].offset +
-                                  (Vector3f { v.offset.data() }).cast<double>();
+                Vector3d offset  = info.controlpoints[v.controlpoint].offset +
+                                   (Vector3f { v.offset.data() }).cast<double>();
                 Vector3d axis    = (Vector3f { v.axis.data() }).cast<double>();
                 double   dis_mid = v.distanceouter - v.distanceinner + 0.1f;
 

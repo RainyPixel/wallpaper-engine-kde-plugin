@@ -1,6 +1,8 @@
 #include "SceneImageEffectLayer.h"
 #include "SceneNode.h"
 
+#include <cassert>
+
 #include "SpecTexs.hpp"
 #include "Core/StringHelper.hpp"
 
@@ -12,17 +14,17 @@ SceneImageEffectLayer::SceneImageEffectLayer(SceneNode* node, float w, float h,
     : m_worldNode(node),
       m_pingpong_a(pingpong_a),
       m_pingpong_b(pingpong_b),
-      m_final_mesh(std::make_unique<SceneMesh>()),
-      m_final_node(std::make_unique<SceneNode>()) {};
+      m_final_mesh(std::make_unique<SceneMesh>()) {};
 
 void SceneImageEffectLayer::ResolveEffect(const SceneMesh& default_mesh,
                                           std::string_view effect_cam) {
+    if (m_resolved) return;
+    // Resolve replaces the authored output and texture aliases in place.
+    m_resolved               = true;
     std::string_view ppong_a = m_pingpong_a, ppong_b = m_pingpong_b;
     auto             swap_pp = [&ppong_a, &ppong_b]() {
         std::swap(ppong_a, ppong_b);
     };
-    auto default_node = SceneNode();
-
     SceneImageEffectNode* last_output { nullptr };
     for (auto& eff : m_effects) {
         for (auto& cmd : eff->commands) {
@@ -43,7 +45,7 @@ void SceneImageEffectLayer::ResolveEffect(const SceneMesh& default_mesh,
             {
                 material.blenmode = BlendMode::Normal;
                 it->sceneNode->SetCamera(effect_cam.data());
-                it->sceneNode->CopyTrans(default_node);
+                it->sceneNode->SetTransformParent(nullptr);
                 it->sceneNode->Mesh()->ChangeMeshDataFrom(default_mesh);
             }
 
@@ -68,7 +70,7 @@ void SceneImageEffectLayer::ResolveEffect(const SceneMesh& default_mesh,
         {
             material.blenmode = m_final_blend;
             last_output->sceneNode->SetCamera(std::string());
-            last_output->sceneNode->CopyTrans(*m_final_node);
+            last_output->sceneNode->SetTransformParent(m_worldNode);
             mesh.ChangeMeshDataFrom(*m_final_mesh);
         }
     }

@@ -7,6 +7,15 @@ A wallpaper plugin integrating [Wallpaper Engine](https://store.steampowered.com
 - **Plasma 6 / Qt 6**
 - **Span Across Screens** — show each screen's part of one desktop-sized wallpaper
 
+In **Settings**, **Mute all wallpapers** controls audio on every screen. Turning it
+off restores each wallpaper's audio settings.
+
+**Follow Wallpaper Engine** lets you pick a detected Wallpaper Engine
+profile. After Apply, the plugin follows that profile's saved selection when the
+wallpaper is available in a local Steam library. Choose **Off** to return to the
+manual wallpaper and its randomization settings. In shared wallpaper mode, the
+profile comes from the auto-detected installation for all screens.
+
 ## Hyprland and Omarchy
 
 The [`hyprland/`](hyprland/README.md) directory contains a separate host that shows web wallpapers
@@ -47,10 +56,13 @@ rpm-ostree install ./wallpaper-engine-kde-plugin-qt6-0-1.fc43.x86_64.rpm
 
 #### Dependencies
 
+Building the plugin or the standalone scene viewers requires CMake 3.22.1 or later.
+
 Arch:
 ```sh
-sudo pacman -S extra-cmake-modules plasma-framework gst-libav ninja \
-base-devel mpv qt6-declarative qt6-webchannel vulkan-headers cmake lz4
+sudo pacman -S extra-cmake-modules libplasma gst-libav ninja \
+base-devel mpv qt6-declarative qt6-webchannel vulkan-headers cmake lz4 \
+freetype2 libpulse
 ```
 
 Fedora:
@@ -67,7 +79,8 @@ sudo dnf install -y ffmpeg-devel --allowerasing
 sudo dnf install vulkan-headers plasma-workspace-devel kf6-plasma-devel \
     kf6-kcoreaddons-devel kf6-kpackage-devel gstreamer1-libav \
     lz4-devel mpv-libs-devel qt6-qtbase-private-devel libplasma-devel \
-    qt6-qtwebchannel-devel cmake extra-cmake-modules
+    qt6-qtwebchannel-devel cmake extra-cmake-modules \
+    freetype-devel pulseaudio-libs-devel
 ```
 
 #### Build and Install
@@ -186,8 +199,13 @@ as soon as either one is updated.
 ### Scene (2D)
 Supported by Vulkan 1.1. Requires *Wallpaper Engine* installed for assets.
 
-Text layers and SceneScript are not implemented. Controls for scripted clocks,
-dates and scripted audio reactions therefore have no effect.
+Text layers can use the fonts shipped with a scene or Wallpaper Engine. Audio-reactive
+shader uniforms use the default playback device's monitor through PulseAudio or
+PipeWire-Pulse when built with libpulse.
+
+The clock, date, audio response and sound button used by Workshop scene 2927820378
+use native implementations of its scripts. Other scripted text layers are skipped,
+and other scripted scene properties keep their authored fallback values.
 
 ### Web
 Basic web APIs supported. WebGL may not work properly.

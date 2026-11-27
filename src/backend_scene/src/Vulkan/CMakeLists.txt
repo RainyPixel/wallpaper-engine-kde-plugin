@@ -20,12 +20,10 @@ vulkan_wrapper.cpp
 
 target_link_libraries(${LIB_NAME}
 PUBLIC
-	glslang
+    glslang::glslang
     spirv-reflect-static
 	${Vulkan_LIBRARIES}
     wpScene
-PRIVATE
-	SPIRV
 )
 target_include_directories(${LIB_NAME} PUBLIC include PRIVATE include/Vulkan include/vkk)
 target_compile_options(${LIB_NAME} PRIVATE ${warn_opts} -Wno-missing-field-initializers)

@@ -19,9 +19,9 @@ Rectangle {
     }
     // SceneBackend reads assets as a QUrl and QUrl::toLocalFile() is empty for
     // a scheme-less one, so the detected native path has to be resolved too.
-    property string steamAssets: steamDetect.assets
-        ? Common.localFileUrl(steamDetect.assets)
-        : Common.getAssetsPath(steamlibrary)
+    property string steamAssets: followedSelection.assets
+        || (steamDetect.assets ? Common.localFileUrl(steamDetect.assets)
+                               : Common.getAssetsPath(steamlibrary))
     // Global Mode: shared config (wallpaper choice + randomization) lives in
     // ~/.config/wekde/global.json instead of per-screen KConfig. globalRev is
     // bumped on every global change to re-evaluate the resolver bindings below.
@@ -31,7 +31,14 @@ Rectangle {
         return globalCfg.enabled ? globalCfg.get(key, fallback) : fallback;
     }
 
-    property string source: Qt.resolvedUrl(effCfg("WallpaperSource", wallpaper.configuration.WallpaperSource)).toString()
+    readonly property string followSteamUser: globalCfg.enabled
+        ? effCfg("FollowSteamUser", "")
+        : wallpaper.configuration.FollowSteamUser
+    readonly property var followedSelection: followSteamUser ? follower.selection : ({})
+    readonly property var followSteamPaths: globalCfg.enabled && followSteamUser
+        ? pyext.detect_steam("") : steamDetect
+    property string source: followedSelection.source
+        || Qt.resolvedUrl(effCfg("WallpaperSource", wallpaper.configuration.WallpaperSource)).toString()
 
     property string filterStr: effCfg("FilterStr", wallpaper.configuration.FilterStr)
 
@@ -43,7 +50,8 @@ Rectangle {
     property bool   mirrorScene: wallpaper.configuration.MirrorScene
     property bool   spanScreens: effCfg("SpanScreens", wallpaper.configuration.SpanScreens)
 
-    property bool   randomizeWallpaper: effCfg("RandomizeWallpaper", wallpaper.configuration.RandomizeWallpaper)
+    property bool   randomizeWallpaper: !followSteamUser
+        && effCfg("RandomizeWallpaper", wallpaper.configuration.RandomizeWallpaper)
     property bool   noRandomWhilePaused: effCfg("NoRandomWhilePaused", wallpaper.configuration.NoRandomWhilePaused)
     property bool   mouseInput: wallpaper.configuration.MouseInput
     property bool   mpvStats: wallpaper.configuration.MpvStats
@@ -55,7 +63,8 @@ Rectangle {
     
     property var curOpt: ({})
     property string workshopid: {
-        const wid = effCfg("WallpaperWorkShopId", wallpaper.configuration.WallpaperWorkShopId);
+        const wid = followedSelection.workshopId
+            || effCfg("WallpaperWorkShopId", wallpaper.configuration.WallpaperWorkShopId);
         pyext.read_wallpaper_config(wid).then(res => {
             if (background.workshopid === wid) background.curOpt = res;
         }).catch(error => console.error(error));
@@ -71,7 +80,6 @@ Rectangle {
     onCurOptChanged: {
         console.log("main.qml onCurOptChanged, curOpt:", JSON.stringify(curOpt));
         displayMode = get_opt_value('display_mode', wallpaper.configuration.DisplayMode);
-        mute = get_opt_value('mute_audio', wallpaper.configuration.MuteAudio);
         volume = get_opt_value('volume', wallpaper.configuration.Volume);
         speed = get_opt_value('speed', wallpaper.configuration.Speed);
         const userProps = curOpt['user_props'];
@@ -80,7 +88,11 @@ Rectangle {
     }
 
     property int    displayMode: get_opt_value('display_mode', wallpaper.configuration.DisplayMode)
-    property bool   mute: get_opt_value('mute_audio', wallpaper.configuration.MuteAudio)
+    readonly property bool mute: {
+        background.globalRev;
+        return globalCfg.get("MuteAllWallpapers", false) === true
+            || get_opt_value('mute_audio', wallpaper.configuration.MuteAudio);
+    }
     property int    volume: get_opt_value('volume', wallpaper.configuration.Volume)
     property real   speed: get_opt_value('speed', wallpaper.configuration.Speed)
     // User properties for scene wallpapers (JSON string format)
@@ -91,9 +103,6 @@ Rectangle {
         target: wallpaper.configuration
         function onDisplayModeChanged() {
             background.displayMode = background.get_opt_value('display_mode', wallpaper.configuration.DisplayMode);
-        }
-        function onMuteAudioChanged() {
-            background.mute = background.get_opt_value('mute_audio', wallpaper.configuration.MuteAudio);
         }
         function onVolumeChanged() {
             background.volume = background.get_opt_value('volume', wallpaper.configuration.Volume);
@@ -169,11 +178,13 @@ Rectangle {
         const path_changed = background.wallpaperPath !== path;
         const type_changed = background.wallpaperType !== type;
         const is_infobackend = background.nowBackend === "InfoShow";
+        const assets_changed = type === "scene" && backendLoader.item
+            && backendLoader.item.assets !== background.steamAssets;
 
         if(type_changed) wallpaperType = type;
         if(path_changed) wallpaperPath = path;
 
-        if(type_changed || is_infobackend || !source) {
+        if(type_changed || assets_changed || is_infobackend || !source) {
             loadBackend();
         } else if(path_changed) {
             backendLoader.item.source = path;
@@ -183,6 +194,7 @@ Rectangle {
     }
 
     function getWorkshopIDPath() {
+        if (followedSelection.projectDirectory) return followedSelection.projectDirectory;
         return Common.getProjectDirectory(wallpaperPath, workshopid,
             steamDetect.projectDirs.length ? steamDetect.projectDirs : Common.getProjectDirs(steamlibrary));
     }
@@ -264,6 +276,11 @@ Rectangle {
     Pyext {
         id: pyext
     }
+    WallpaperEngineFollower {
+        id: follower
+        property var inputs: [background.followSteamPaths, background.followSteamUser]
+        onInputsChanged: configure(inputs[0] || {}, inputs[1], false)
+    }
     WallpaperListModel {
         id: wpListModel
         enabled: background.randomizeWallpaper
@@ -313,6 +330,7 @@ Rectangle {
         interval: background.switchTimer * 1000 * 60
         repeat: true
         onTriggered: {
+            if(!background.randomizeWallpaper) return;
             if(background.noRandomWhilePaused && !background.ok) return;
             // in Global Mode only the primary screen picks; the choice is
             // shared via the global config so all screens apply the same one
@@ -373,18 +391,6 @@ Rectangle {
         height: spanning ? desktop.height : parent.height
         property var item: null
 
-        // Scene framebuffers take their size at creation; wait for geometry to settle.
-        onWidthChanged: sceneResizeTimer.restart()
-        onHeightChanged: sceneResizeTimer.restart()
-        Timer {
-            id: sceneResizeTimer
-            interval: 100
-            onTriggered: {
-                if(backendLoader.item && background.wallpaperType === 'scene')
-                    background.loadBackend();
-            }
-        }
-
         signal loaded
 
         Component.onCompleted: {
@@ -427,6 +433,10 @@ Rectangle {
                 background.mouseHooker.target = re;
            }
         }
+    }
+
+    function recreateScene(scene) {
+        if (backendLoader.item === scene) loadBackend();
     }
 
     function loadBackend() {
@@ -484,10 +494,11 @@ Rectangle {
         // background signal connect
         background.videoBackendChanged.connect(loadBackend);
         background.okChanged.connect(autoPause);
-        background.sourceChanged.connect(applySource);
+        const scheduleSourceChange = () => Qt.callLater(background.applySource);
+        background.sourceChanged.connect(scheduleSourceChange);
+        background.steamAssetsChanged.connect(scheduleSourceChange);
 
         lauchPauseTimer.start();
-        randomizeTimer.start();
     }
 }
 }

@@ -1,5 +1,6 @@
 #include "WPSceneParser.hpp"
 #include "WPJson.hpp"
+#include "WPSceneText.hpp"
 #include "WPUserProperties.hpp"
 
 #include "Utils/String.h"
@@ -11,6 +12,7 @@
 #include "SpecTexs.hpp"
 
 #include "WPShaderParser.hpp"
+#include "WPSceneScript.hpp"
 #include "WPTexImageParser.hpp"
 #include "WPParticleParser.hpp"
 #include "WPSoundParser.hpp"
@@ -53,17 +55,37 @@ struct ParseContext {
     i32                    ortho_h;
     fs::VFS*               vfs;
 
-    ShaderValueMap             global_base_uniforms;
-    std::shared_ptr<SceneNode> effect_camera_node;
-    std::shared_ptr<SceneNode> global_camera_node;
-    std::shared_ptr<SceneNode> global_perspective_camera_node;
+    ShaderValueMap               global_base_uniforms;
+    std::shared_ptr<SceneNode>   effect_camera_node;
+    std::shared_ptr<SceneNode>   global_camera_node;
+    std::shared_ptr<SceneNode>   global_perspective_camera_node;
+    std::shared_ptr<SceneShader> text_shader;
 };
 
-using WPObjectVar = std::variant<wpscene::WPImageObject, wpscene::WPParticleObject,
+using WPObjectVar = std::variant<std::monostate, wpscene::WPImageObject, wpscene::WPParticleObject,
                                  wpscene::WPSoundObject, wpscene::WPLightObject>;
 
 namespace
 {
+struct SceneObject {
+    enum class TransformState
+    {
+        Unresolved,
+        Resolving,
+        Resolved
+    };
+
+    explicit SceneObject(const nlohmann::json& json): json(json) {}
+
+    const nlohmann::json&      json;
+    i32                        id { 0 };
+    i32                        parent_id { 0 };
+    WPObjectVar                payload;
+    std::shared_ptr<SceneNode> node;
+    SceneObject*               parent { nullptr };
+    TransformState             state { TransformState::Unresolved };
+};
+
 // mapRate < 1.0
 void GenCardMesh(SceneMesh& mesh, const std::array<uint16_t, 2> size,
                  const std::array<float, 2> mapRate = { 1.0f, 1.0f }) {
@@ -544,7 +566,7 @@ void InitContext(ParseContext& context, fs::VFS& vfs, wpscene::WPScene& sc) {
     }
 }
 
-void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
+std::shared_ptr<SceneNode> ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
     auto& wpimgobj = img_obj;
     auto& vfs      = *context.vfs;
 
@@ -560,7 +582,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
         nlohmann::json         json;
         if (! PARSE_JSON(fs::GetFileContent(vfs, "/assets/materials/util/effectpassthrough.json"),
                          json))
-            return;
+            return nullptr;
         colorMat.FromJson(json);
         colorMat.combos["BONECOUNT"] = 1;
         colorMat.combos["BLENDMODE"] = wpimgobj.colorBlendMode;
@@ -577,7 +599,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
     bool hasEffect = count_eff > 0;
     // skip no effect fullscreen layer
     if (! hasEffect && wpimgobj.fullscreen) {
-        return;
+        return nullptr;
     }
 
     bool hasPuppet = ! wpimgobj.puppet.empty();
@@ -587,7 +609,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
     // skip no effect compose layer
     // it's not the correct behaviour, but do it for now
     if (! hasEffect && isCompose) {
-        return;
+        return nullptr;
     }
 
     std::unique_ptr<WPMdl> puppet;
@@ -612,6 +634,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
 
     SceneMaterial     material;
     WPShaderValueData svData;
+    svData.useIdentityModelTransform = hasEffect && ! isCompose;
 
     ShaderValueMap baseConstSvs = context.global_base_uniforms;
     WPShaderInfo   shaderInfo;
@@ -642,7 +665,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
                            &shaderInfo)) {
             LOG_ERROR(
                 "load imageobj id=%d '%s' material failed", wpimgobj.id, wpimgobj.name.c_str());
-            return;
+            return nullptr;
         };
         LoadConstvalue(material, wpimgobj.material, shaderInfo);
     }
@@ -686,7 +709,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             if (hasEffect) {
                 GenCardMesh(
                     mesh, { (uint16_t)wpimgobj.size[0], (uint16_t)wpimgobj.size[1] }, mapRate);
-                WPMdlParser::GenPuppetMesh(effct_final_mesh, *puppet);
+                WPMdlParser::GenPuppetMesh(effct_final_mesh, *puppet, wpimgobj.puppet_layers);
 
                 wpscene::WPImageEffect puppet_effect;
                 wpscene::WPMaterial    puppet_mat;
@@ -698,7 +721,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             } else {
                 svData.puppet_layer = WPPuppetLayer(puppet->puppet);
                 svData.puppet_layer.prepared(wpimgobj.puppet_layers);
-                WPMdlParser::GenPuppetMesh(mesh, *puppet);
+                WPMdlParser::GenPuppetMesh(mesh, *puppet, wpimgobj.puppet_layers);
             }
         }
         if (! puppet) {
@@ -749,11 +772,6 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             imgEffectLayer->SetFinalBlend(imgBlendMode);
             imgEffectLayer->SetOffscreen(isOffscreen);
             imgEffectLayer->FinalMesh().ChangeMeshDataFrom(effct_final_mesh);
-            imgEffectLayer->FinalNode().CopyTrans(*spImgNode);
-            if (isCompose) {
-            } else {
-                spImgNode->CopyTrans(SceneNode());
-            }
             scene.cameras.at(nodeAddr)->AttatchImgEffect(imgEffectLayer);
         }
         // set renderTarget for ping-pong operate
@@ -923,7 +941,7 @@ void ParseImageObj(ParseContext& context, wpscene::WPImageObject& img_obj) {
             .allowReuse = true,
         };
     }
-    context.scene->sceneGraph->AppendChild(spImgNode);
+    return spImgNode;
 }
 
 struct ParticleChildPtr {
@@ -934,9 +952,11 @@ struct ParticleChildPtr {
     i32 max_instancecount { 1 };
 };
 
-void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartobj,
-                      ParticleChildPtr child_ptr = {}) {
-    if (! wppartobj.visible) return;
+std::shared_ptr<SceneNode> ParseParticleObj(ParseContext&                     context,
+                                            wpscene::WPParticleObject&        wppartobj,
+                                            ParticleChildPtr                  child_ptr  = {},
+                                            std::optional<WPSpectrum16Script> rateScript = {}) {
+    if (! wppartobj.visible) return nullptr;
 
     struct ChildData {
         ChildData() = default;
@@ -959,8 +979,8 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     if (is_child) {
         p_particle_obj = &(child_ptr.child->obj);
         spNode         = std::make_shared<SceneNode>(Vector3f(child_ptr.child->origin.data()),
-                                             Vector3f(child_ptr.child->scale.data()),
-                                             Vector3f(child_ptr.child->angles.data()));
+                                                     Vector3f(child_ptr.child->scale.data()),
+                                                     Vector3f(child_ptr.child->angles.data()));
         child_data     = ChildData(*child_ptr.child);
 
         child_ptr.max_instancecount *= child_data.maxcount;
@@ -968,8 +988,8 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     } else {
         p_particle_obj = &wppartobj.particleObj;
         spNode         = std::make_shared<SceneNode>(Vector3f(wppartobj.origin.data()),
-                                             Vector3f(wppartobj.scale.data()),
-                                             Vector3f(wppartobj.angles.data()));
+                                                     Vector3f(wppartobj.scale.data()),
+                                                     Vector3f(wppartobj.angles.data()));
     }
 
     wpscene::ParticleInstanceoverride override = wppartobj.instanceoverride;
@@ -979,7 +999,7 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
 
     if (particle_obj.renderers.empty()) {
         LOG_ERROR("particle '%s' has no renderers, skipping", wppartobj.name.c_str());
-        return;
+        return nullptr;
     }
     auto wppartRenderer = particle_obj.renderers.at(0);
     bool render_rope    = sstart_with(wppartRenderer.name, "rope");
@@ -1042,7 +1062,7 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
     }
     if (! mat_ok) {
         LOG_ERROR("load particleobj '%s' material faild", wppartobj.name.c_str());
-        return;
+        return nullptr;
     }
     LoadConstvalue(material, particle_obj.material, shaderInfo);
     auto  spMesh             = std::make_shared<SceneMesh>(true);
@@ -1104,18 +1124,23 @@ void ParseParticleObj(ParseContext& context, wpscene::WPParticleObject& wppartob
                          });
     }
 
+    if (rateScript) {
+        auto* target = particleSub.get();
+        context.shader_updater->AddAudioUpdate([target, rate = override.rate, script = *rateScript](
+                                                   const auto& average, float dt) mutable {
+            target->SetRate(rate * script.Update(average, dt));
+        });
+    }
     if (is_child)
         child_ptr.particle_parent->AddChild(std::move(particleSub));
     else
         context.scene->paritileSys->subsystems.emplace_back(std::move(particleSub));
 
-    if (is_child)
-        child_ptr.node_parent->AppendChild(spNode);
-    else
-        context.scene->sceneGraph->AppendChild(spNode);
+    if (is_child) child_ptr.node_parent->AppendChild(spNode);
+    return spNode;
 }
 
-void ParseLightObj(ParseContext& context, wpscene::WPLightObject& light_obj) {
+std::shared_ptr<SceneNode> ParseLightObj(ParseContext& context, wpscene::WPLightObject& light_obj) {
     auto node = std::make_shared<SceneNode>(Vector3f(light_obj.origin.data()),
                                             Vector3f(light_obj.scale.data()),
                                             Vector3f(light_obj.angles.data()));
@@ -1126,17 +1151,86 @@ void ParseLightObj(ParseContext& context, wpscene::WPLightObject& light_obj) {
     auto& light = *(context.scene->lights.back());
     light.setNode(node);
 
-    context.scene->sceneGraph->AppendChild(node);
+    return node;
 }
 
 template<typename T>
-void AddWPObject(std::vector<WPObjectVar>& objs, const nlohmann::json& json_obj, fs::VFS& vfs) {
-    T wpobj;
-    if (! wpobj.FromJson(json_obj, vfs)) {
+void ParseObjectPayload(SceneObject& object, fs::VFS& vfs) {
+    T wpobj {};
+    if (! wpobj.FromJson(object.json, vfs)) {
         LOG_ERROR("parse scene object failed, name: %s", wpobj.name.c_str());
         return;
     }
-    objs.push_back(wpobj);
+    object.payload = std::move(wpobj);
+}
+
+std::shared_ptr<SceneNode> MakeTransformNode(const SceneObject& object) {
+    std::array<float, 3> origin { 0.0f, 0.0f, 0.0f };
+    std::array<float, 3> scale { 1.0f, 1.0f, 1.0f };
+    std::array<float, 3> angles { 0.0f, 0.0f, 0.0f };
+    GET_JSON_NAME_VALUE_NOWARN(object.json, "origin", origin);
+    GET_JSON_NAME_VALUE_NOWARN(object.json, "scale", scale);
+    GET_JSON_NAME_VALUE_NOWARN(object.json, "angles", angles);
+    auto node = std::make_shared<SceneNode>(
+        Vector3f(origin.data()), Vector3f(scale.data()), Vector3f(angles.data()));
+    if (const auto* image = std::get_if<wpscene::WPImageObject>(&object.payload)) {
+        LoadAlignment(*node, image->alignment, { image->size[0], image->size[1] });
+    }
+    return node;
+}
+
+void AttachObjectNodes(SceneNode& root, std::vector<SceneObject>& objects) {
+    const bool has_parents =
+        std::any_of(objects.begin(), objects.end(), [](const SceneObject& obj) {
+            return obj.parent_id != 0;
+        });
+    if (has_parents) {
+        std::unordered_map<i32, SceneObject*> by_id;
+        for (auto& object : objects) {
+            if (object.id != 0) by_id[object.id] = &object;
+        }
+        for (auto& object : objects) {
+            const auto parent = by_id.find(object.parent_id);
+            if (parent == by_id.end()) continue;
+            object.parent = parent->second;
+            if (! object.parent->node) object.parent->node = MakeTransformNode(*object.parent);
+        }
+    }
+
+    // The flat array defines draw order. A particle object's own child passes stay with it.
+    for (auto& object : objects) {
+        if (! object.node) continue;
+        object.node->ID() = object.id;
+        root.AppendChild(object.node);
+    }
+    if (! has_parents) return;
+
+    // Resolve and update from parent to child, cutting a back edge if the chain has a cycle.
+    using State = SceneObject::TransformState;
+    std::vector<SceneObject*> chain;
+    for (auto& object : objects) {
+        if (! object.node || object.state == State::Resolved) continue;
+        auto* next = &object;
+        while (next && next->state == State::Unresolved) {
+            next->state = State::Resolving;
+            chain.push_back(next);
+            next = next->parent;
+        }
+        if (next && next->state == State::Resolving) chain.back()->parent = nullptr;
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            auto& member = **it;
+            if (member.parent) {
+                member.node->SetTransformParent(member.parent->node.get());
+            } else if (member.parent_id != 0) {
+                LOG_ERROR("scene object id=%d: missing or cyclic parent %d, using scene root",
+                          member.id,
+                          member.parent_id);
+            }
+            member.node->UpdateTrans();
+            member.state = State::Resolved;
+        }
+        chain.clear();
+    }
 }
 } // namespace
 
@@ -1177,24 +1271,28 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
 
     ParseContext context;
 
-    std::vector<WPObjectVar> wp_objs;
-
-    for (auto& obj : json.at("objects")) {
+    const auto&              json_objects = json.at("objects");
+    std::vector<SceneObject> objects;
+    objects.reserve(json_objects.size());
+    for (const auto& obj : json_objects) {
+        auto& object = objects.emplace_back(obj);
+        GET_JSON_NAME_VALUE_NOWARN(obj, "id", object.id);
+        GET_JSON_NAME_VALUE_NOWARN(obj, "parent", object.parent_id);
         if (obj.contains("image") && ! obj.at("image").is_null()) {
-            AddWPObject<wpscene::WPImageObject>(wp_objs, obj, vfs);
+            ParseObjectPayload<wpscene::WPImageObject>(object, vfs);
         } else if (obj.contains("particle") && ! obj.at("particle").is_null()) {
-            AddWPObject<wpscene::WPParticleObject>(wp_objs, obj, vfs);
+            ParseObjectPayload<wpscene::WPParticleObject>(object, vfs);
         } else if (obj.contains("sound") && ! obj.at("sound").is_null()) {
-            AddWPObject<wpscene::WPSoundObject>(wp_objs, obj, vfs);
+            ParseObjectPayload<wpscene::WPSoundObject>(object, vfs);
         } else if (obj.contains("light") && ! obj.at("light").is_null()) {
-            AddWPObject<wpscene::WPLightObject>(wp_objs, obj, vfs);
+            ParseObjectPayload<wpscene::WPLightObject>(object, vfs);
         }
     }
 
     if (sc.general.orthogonalprojection.auto_) {
         i32 w = 0, h = 0;
-        for (auto& obj : wp_objs) {
-            auto* img = std::get_if<wpscene::WPImageObject>(&obj);
+        for (auto& object : objects) {
+            auto* img = std::get_if<wpscene::WPImageObject>(&object.payload);
             if (img == nullptr) continue;
             i32 size = (i32)(img->size.at(0) * img->size.at(1));
             if (size > w * h) {
@@ -1235,22 +1333,83 @@ std::shared_ptr<Scene> WPSceneParser::Parse(std::string_view scene_id, const std
         ~GlslangScope() { WPShaderParser::FinalGlslang(); }
     } glslangScope;
 
-    for (WPObjectVar& obj : wp_objs) {
-        std::visit(visitor::overload {
-                       [&context](wpscene::WPImageObject& obj) {
-                           ParseImageObj(context, obj);
-                       },
-                       [&context](wpscene::WPParticleObject& obj) {
-                           ParseParticleObj(context, obj);
-                       },
-                       [&context, &sm](wpscene::WPSoundObject& obj) {
-                           WPSoundParser::Parse(obj, *context.vfs, sm);
-                       },
-                       [&context](wpscene::WPLightObject& obj) {
-                           ParseLightObj(context, obj);
-                       },
-                   },
-                   obj);
+    std::unordered_map<std::string, std::shared_ptr<std::atomic_bool>> soundLayers;
+    for (auto& object : objects) {
+        if (std::holds_alternative<std::monostate>(object.payload) &&
+            object.json.contains("text")) {
+            auto script = ParseTextScript(object.json.at("text"), userProps);
+            if (script) {
+                auto  node     = MakeTransformNode(object);
+                auto& textures = static_cast<WPTexImageParser&>(*context.scene->imageParser);
+                if (auto update = AddSceneText(*node,
+                                               object.json,
+                                               std::move(*script),
+                                               vfs,
+                                               textures,
+                                               context.text_shader)) {
+                    WPShaderValueData data;
+                    GET_JSON_NAME_VALUE_NOWARN(object.json, "parallaxDepth", data.parallaxDepth);
+                    context.shader_updater->SetNodeData(node.get(), data);
+                    context.shader_updater->AddTextUpdate(std::move(update));
+                    object.node = std::move(node);
+                }
+            }
+            continue;
+        }
+        object.node = std::visit(
+            visitor::overload {
+                [&](wpscene::WPImageObject& obj) {
+                    auto node  = ParseImageObj(context, obj);
+                    auto scale = object.json.find("scale");
+                    if (node && scale != object.json.end()) {
+                        if (auto script = ParseSpectrum16Script(*scale, userProps)) {
+                            const float initial = obj.scale[0];
+                            node->SetAnimatedScale(initial * script->minimum);
+                            context.shader_updater->AddAudioUpdate(
+                                [target = node.get(), initial, script = *script](
+                                    const auto& average, float dt) mutable {
+                                    target->SetAnimatedScale(initial * script.Update(average, dt));
+                                });
+                        }
+                    }
+                    return node;
+                },
+                [&](wpscene::WPParticleObject& obj) {
+                    std::optional<WPSpectrum16Script> rateScript;
+                    auto overrides = object.json.find("instanceoverride");
+                    if (overrides != object.json.end() && overrides->is_object()) {
+                        auto rate = overrides->find("rate");
+                        if (rate != overrides->end())
+                            rateScript = ParseSpectrum16Script(*rate, userProps);
+                    }
+                    return ParseParticleObj(context, obj, {}, rateScript);
+                },
+                [&](wpscene::WPSoundObject& obj) -> std::shared_ptr<SceneNode> {
+                    soundLayers[obj.name] = WPSoundParser::Parse(obj, *context.vfs, sm);
+                    return nullptr;
+                },
+                [&](wpscene::WPLightObject& obj) {
+                    return ParseLightObj(context, obj);
+                },
+                [](std::monostate) -> std::shared_ptr<SceneNode> {
+                    return nullptr;
+                },
+            },
+            object.payload);
+    }
+    AttachObjectNodes(*context.scene->sceneGraph, objects);
+    for (const auto& object : objects) {
+        const auto* image = std::get_if<wpscene::WPImageObject>(&object.payload);
+        if (! object.node || ! image || ! image->visible) continue;
+        const auto visible = object.json.find("visible");
+        if (visible == object.json.end()) continue;
+        const auto script = ParseSoundClickScript(*visible);
+        if (! script) continue;
+        const auto sound = soundLayers.find(std::string(*script));
+        if (sound != soundLayers.end()) {
+            context.scene->soundClicks.push_back(
+                { object.node.get(), image->size[0], image->size[1], sound->second });
+        }
     }
 
     return context.scene;

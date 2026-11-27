@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <unordered_map>
 
 #include "SceneTexture.h"
@@ -46,6 +47,14 @@ public:
     std::unique_ptr<IShaderValueUpdater> shaderValueUpdater;
     std::unique_ptr<IImageParser>        imageParser;
     std::unique_ptr<fs::VFS>             vfs;
+
+    struct SoundClick {
+        SceneNode*                        node;
+        float                             width;
+        float                             height;
+        std::shared_ptr<std::atomic_bool> playing;
+    };
+    std::vector<SoundClick> soundClicks;
 
     std::string scene_id { "unknown_id" };
     // Keep mirror identity tied to the overrides used to parse this scene.

@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Install clang-format
-        run: pip install clang-format==18.1.8
+        run: pip install clang-format==23.1.5
 
       - name: Check C++ formatting
         # --dry-run prints differences; --Werror turns any difference into a
         # non-zero exit code so the job fails on style violations.
         run: |
           find src hyprland tests \( -path "*/third_party/*" -prune \) -o \
-            \( -name "*.cpp" -o -name "*.hpp" -o -name "*.h" \) -print | \
-            xargs clang-format --dry-run --Werror
+            \( -name "*.cpp" -o -name "*.hpp" -o -name "*.h" \) \
+            -exec clang-format --dry-run --Werror {} +

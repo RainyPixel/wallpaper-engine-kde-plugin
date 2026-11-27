@@ -1,6 +1,7 @@
 #include <doctest.h>
 
 #include "Audio/SoundManager.h"
+#include "Fs/LimitedBinaryStream.h"
 #include "Fs/MemBinaryStream.h"
 #include "Fs/VFS.h"
 #include "Scene/Scene.h"
@@ -105,4 +106,23 @@ TEST_CASE("audio decoding rejects missing and corrupt source streams") {
     CHECK_FALSE(audio::CreateSoundStream(nullptr, desc));
     auto invalid = std::make_shared<fs::MemBinaryStream>(std::vector<uint8_t> { 1, 2, 3 });
     CHECK_FALSE(audio::CreateSoundStream(invalid, desc));
+}
+
+TEST_CASE("embedded sound can rewind and seek relative to the end of its package entry") {
+    auto package =
+        std::make_shared<fs::MemBinaryStream>(std::vector<uint8_t> { 'x', 'A', 'B', 'C', 'y' });
+    fs::LimitedBinaryStream entry(package, 1, 3);
+    char                    bytes[4] {};
+    REQUIRE(entry.Read(bytes, 2) == 2);
+    REQUIRE(entry.Rewind());
+    CHECK(entry.Read(bytes, sizeof(bytes)) == 3);
+    CHECK(std::string_view(bytes, 3) == "ABC");
+    CHECK(entry.Read(bytes, 1) == 0);
+
+    REQUIRE(entry.SeekEnd(-1));
+    CHECK(entry.Read(bytes, 1) == 1);
+    CHECK(bytes[0] == 'C');
+    CHECK_FALSE(entry.SeekEnd(1));
+    CHECK_FALSE(entry.SeekCur(-4));
+    CHECK(entry.Tell() == 3);
 }

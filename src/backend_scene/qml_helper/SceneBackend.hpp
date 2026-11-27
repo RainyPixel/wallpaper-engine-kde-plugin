@@ -6,6 +6,9 @@
 #include <QtGui/QMouseEvent>
 #include <QtGui/QHoverEvent>
 
+#include <atomic>
+#include <optional>
+
 #include "SceneWallpaper.hpp"
 
 Q_DECLARE_LOGGING_CATEGORY(wekdeScene)
@@ -74,9 +77,12 @@ public:
     // Send the neutral pointer (screen centre) so parallax eases back when the
     // desktop mouse hook is detached.
     Q_INVOKABLE void centerPointer();
+    Q_INVOKABLE bool needsResize() const;
 
 protected:
+    void itemChange(ItemChange change, const ItemChangeData& value) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void hoverMoveEvent(QHoverEvent* event) override;
 
@@ -93,8 +99,11 @@ signals:
     void volumeChanged();
     void userPropertiesChanged();
     void firstFrame();
+    void renderScaleChanged();
 
 private:
+    QSize requestedRenderExtent() const;
+
     QUrl m_source;
     QUrl m_assets;
 
@@ -115,9 +124,11 @@ public:
     virtual ~SceneObject();
 
 private:
-    void setScenePropertyQurl(std::string_view, QUrl);
-    bool m_inited { false };
-    bool m_enable_valid { false };
+    void                   setScenePropertyQurl(std::string_view, QUrl);
+    bool                   m_inited { false };
+    bool                   m_enable_valid { false };
+    std::atomic<QSize>     m_submittedExtent { QSize() };
+    std::optional<QPointF> m_mousePress;
 
     std::shared_ptr<wallpaper::SceneWallpaper> m_scene { nullptr };
 

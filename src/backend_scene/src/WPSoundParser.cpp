@@ -6,6 +6,7 @@
 
 #include <string>
 #include <string_view>
+#include <algorithm>
 
 using namespace wallpaper;
 
@@ -31,11 +32,18 @@ public:
         float        volume { 1.0f };
         PlaybackMode mode { PlaybackMode::Loop };
     };
-    WPSoundStream(const std::vector<std::string>& paths, fs::VFS& vfs, Config c)
-        : vfs(vfs), m_config(c), m_soundPaths(paths) {};
+    WPSoundStream(const std::vector<std::string>& paths, fs::VFS& vfs, Config c,
+                  std::shared_ptr<std::atomic_bool> playing)
+        : vfs(vfs), m_config(c), m_soundPaths(paths), m_playing(std::move(playing)) {}
     virtual ~WPSoundStream() = default;
 
     uint64_t NextPcmData(void* pData, uint32_t frameCount) override {
+        if (! m_playing->load(std::memory_order_relaxed)) {
+            std::fill_n(static_cast<float*>(pData),
+                        static_cast<size_t>(frameCount) * m_desc.channels,
+                        0.0f);
+            return frameCount;
+        }
         // first
         if (! m_curActive && ! Switch()) return 0;
 
@@ -75,18 +83,20 @@ private:
     Desc     m_desc;
     uint32_t m_curIndex { 0 };
 
-    const std::vector<std::string> m_soundPaths;
-    std::unique_ptr<SoundStream>   m_curActive;
+    const std::vector<std::string>    m_soundPaths;
+    std::unique_ptr<SoundStream>      m_curActive;
+    std::shared_ptr<std::atomic_bool> m_playing;
 };
 
-void WPSoundParser::Parse(const wpscene::WPSoundObject& obj, fs::VFS& vfs,
-                          audio::SoundManager& sm) {
+std::shared_ptr<std::atomic_bool> WPSoundParser::Parse(const wpscene::WPSoundObject& obj,
+                                                       fs::VFS& vfs, audio::SoundManager& sm) {
     WPSoundStream::Config config { .maxtime = obj.maxtime,
                                    .mintime = obj.mintime,
                                    .volume  = obj.volume > 1.0f ? 1.0f : obj.volume,
                                    .mode    = ToPlaybackMode(obj.playbackmode) };
 
-    auto ss = std::make_unique<WPSoundStream>(obj.sound, vfs, config);
-    // auto ss_raw = ss.get();
+    auto playing = std::make_shared<std::atomic_bool>(! obj.startSilent);
+    auto ss      = std::make_unique<WPSoundStream>(obj.sound, vfs, config, playing);
     sm.MountStream(std::move(ss));
+    return playing;
 }

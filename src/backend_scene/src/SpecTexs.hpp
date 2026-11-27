@@ -65,13 +65,18 @@ constexpr std::string_view G_ETVPI { "g_EffectTextureProjectionMatrixInverse" };
 constexpr std::string_view G_LP { "g_LightsPosition" };
 constexpr std::string_view G_LCP { "g_LightsColorPremultiplied" };
 
-constexpr std::string_view G_TIME { "g_Time" };
-constexpr std::string_view G_DAYTIME { "g_DayTime" };
-constexpr std::string_view G_POINTERPOSITION { "g_PointerPosition" };
-constexpr std::string_view G_TEXELSIZE { "g_TexelSize" };
-constexpr std::string_view G_TEXELSIZEHALF { "g_TexelSizeHalf" };
-constexpr std::string_view G_BONES { "g_Bones" };
-constexpr std::string_view G_SCREEN { "g_Screen" };
+constexpr std::string_view                               G_TIME { "g_Time" };
+constexpr std::string_view                               G_DAYTIME { "g_DayTime" };
+constexpr std::string_view                               G_POINTERPOSITION { "g_PointerPosition" };
+constexpr std::string_view                               G_TEXELSIZE { "g_TexelSize" };
+constexpr std::string_view                               G_TEXELSIZEHALF { "g_TexelSizeHalf" };
+constexpr std::string_view                               G_BONES { "g_Bones" };
+constexpr std::array<std::array<std::string_view, 2>, 3> WE_AUDIO_SPECTRUM_NAMES { {
+    { "g_AudioSpectrum16Left", "g_AudioSpectrum16Right" },
+    { "g_AudioSpectrum32Left", "g_AudioSpectrum32Right" },
+    { "g_AudioSpectrum64Left", "g_AudioSpectrum64Right" },
+} };
+constexpr std::string_view                               G_SCREEN { "g_Screen" };
 constexpr std::string_view G_PARALLAXPOSITION { "g_ParallaxPosition" };
 
 constexpr std::string_view SpecTex_Default { "_rt_default" };

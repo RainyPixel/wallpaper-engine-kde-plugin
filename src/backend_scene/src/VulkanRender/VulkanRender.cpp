@@ -267,9 +267,9 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
 
     {
         VkCommandPoolCreateInfo pool_info {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
-                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags            = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                                VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
             .queueFamilyIndex = device().graphics_queue().family_index,
         };
         VVK_CHECK_BOOL_RE(device().handle().CreateCommandPool(pool_info, m_cmd_pool));
@@ -317,10 +317,10 @@ bool VulkanRender::Impl::initRes() {
                                                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                                                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     m_dyn_buf    = std::make_unique<StagingBuffer>(device(),
-                                                2 * 1024 * 1024,
-                                                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                                                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+                                                   2 * 1024 * 1024,
+                                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                                                       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     if (! m_vertex_buf->allocate()) return false;
     if (! m_dyn_buf->allocate()) return false;
     {
@@ -506,15 +506,15 @@ void VulkanRender::Impl::drawFrameSwapchain() {
 
     VkPipelineStageFlags wait_dst_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo         sub_info {
-                .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                .pNext                = nullptr,
-                .waitSemaphoreCount   = 1,
-                .pWaitSemaphores      = rr.sem_swap_wait_image.address(),
-                .pWaitDstStageMask    = &wait_dst_stage,
-                .commandBufferCount   = 1,
-                .pCommandBuffers      = rr.command.address(),
-                .signalSemaphoreCount = 1,
-                .pSignalSemaphores    = render_finished.address(),
+        .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext                = nullptr,
+        .waitSemaphoreCount   = 1,
+        .pWaitSemaphores      = rr.sem_swap_wait_image.address(),
+        .pWaitDstStageMask    = &wait_dst_stage,
+        .commandBufferCount   = 1,
+        .pCommandBuffers      = rr.command.address(),
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores    = render_finished.address(),
     };
 
     VkPresentInfoKHR present_info {

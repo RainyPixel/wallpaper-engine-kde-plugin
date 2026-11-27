@@ -60,11 +60,11 @@ std::optional<vvk::RenderPass> CreateRenderPass(const vvk::Device& device, VkFor
     // or sampled it; wait for those writes, not just for fragment shading, or the
     // GPU can overlap the passes tile by tile (write-after-write on the canvas).
     VkSubpassDependency dependency {
-        .srcSubpass   = VK_SUBPASS_EXTERNAL,
-        .dstSubpass   = 0,
-        .srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        .srcSubpass    = VK_SUBPASS_EXTERNAL,
+        .dstSubpass    = 0,
+        .srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
         .dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -100,7 +100,15 @@ static void UpdateUniform(StagingBuffer* buf, const StagingBufferRef& bufref,
         return;
     }
 
-    size_t offset    = uni->second.offset;
+    size_t       offset = uni->second.offset;
+    const size_t stride = uni->second.scalar_array_stride;
+    if (stride > sizeof(float)) {
+        if (value.size() > uni->second.num) return;
+        for (size_t i = 0; i < value.size(); ++i)
+            buf->writeToBuf(
+                bufref, value_u8.subspan(i * sizeof(float), sizeof(float)), offset + i * stride);
+        return;
+    }
     size_t type_size = sizeof(float) * uni->second.num;
     if (type_size != value_u8.size()) {
         // assert(type_size == value_u8.size());
@@ -161,9 +169,16 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         // not be cached as frame-static. Covers time, cursor/parallax, and puppet
         // bones (driven by frameTime). Check every uniform block, not just the first.
         for (auto& block : ref.blocks) {
+            const bool usesSpectrum = std::any_of(WE_AUDIO_SPECTRUM_NAMES.begin(),
+                                                  WE_AUDIO_SPECTRUM_NAMES.end(),
+                                                  [&](const auto& names) {
+                                                      return exists(block.member_map, names[0]) ||
+                                                             exists(block.member_map, names[1]);
+                                                  });
             if (exists(block.member_map, G_TIME) || exists(block.member_map, G_DAYTIME) ||
                 exists(block.member_map, G_POINTERPOSITION) ||
-                exists(block.member_map, G_PARALLAXPOSITION) || exists(block.member_map, G_BONES)) {
+                exists(block.member_map, G_PARALLAXPOSITION) || exists(block.member_map, G_BONES) ||
+                usesSpectrum) {
                 m_uses_time_uniforms = true;
                 break;
             }
@@ -225,11 +240,11 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
         auto&     out_rt  = scene.renderTargets.at(m_desc.output);
         const int writers = RealTargetWriteCount(scene.rt_write_count, m_desc.output);
         m_frame_static    = PassOutputFrameStatic(scene.cache_passes,
-                                               isStatic(),
-                                               m_uses_time_uniforms,
-                                               inputs_static,
-                                               out_rt.allowReuse,
-                                               writers);
+                                                  isStatic() && ! m_desc.node->AnimatedTransform(),
+                                                  m_uses_time_uniforms,
+                                                  inputs_static,
+                                                  out_rt.allowReuse,
+                                                  writers);
         scene.rt_frame_static[m_desc.output] = m_frame_static;
     }
 
@@ -303,6 +318,8 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, RenderingReso
                 if (! rr.dyn_buf->allocateSubRef(indice.CapacitySizeof(), buf)) return;
             }
         }
+        // New staging allocations need the current mesh even if its vertices have not changed.
+        if (m_desc.dyn_vertex) mesh.SetDirty();
     }
     {
         VkPipelineColorBlendAttachmentState color_blend;
@@ -489,13 +506,13 @@ void CustomShaderPass::execute(const Device&, RenderingResources& rr) {
                                          img.view,
                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
         VkWriteDescriptorSet  wset {
-             .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-             .pNext           = nullptr,
-             .dstSet          = {},
-             .dstBinding      = (uint32_t)binding,
-             .descriptorCount = 1,
-             .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-             .pImageInfo      = &desc_img,
+            .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext           = nullptr,
+            .dstSet          = {},
+            .dstBinding      = (uint32_t)binding,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo      = &desc_img,
         };
         cmd.PushDescriptorSetKHR(VK_PIPELINE_BIND_POINT_GRAPHICS, *m_desc.pipeline.layout, 0, wset);
 

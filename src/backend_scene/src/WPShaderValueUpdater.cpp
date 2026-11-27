@@ -17,7 +17,34 @@
 using namespace wallpaper;
 using namespace Eigen;
 
+namespace
+{
+template<usize N>
+void ReduceSpectrum(const std::array<float, 64>& source, std::array<float, N>& target) {
+    constexpr usize group = 64 / N;
+    auto            first = source.begin();
+    for (auto& band : target) {
+        band = *std::max_element(first, first + group);
+        first += group;
+    }
+}
+} // namespace
+
 void WPShaderValueUpdater::FrameBegin() {
+    if (m_audio_monitor) {
+        m_audio_spectrum = m_audio_monitor->latest();
+        ReduceSpectrum(m_audio_spectrum.left, m_audio16[0]);
+        ReduceSpectrum(m_audio_spectrum.right, m_audio16[1]);
+        ReduceSpectrum(m_audio_spectrum.left, m_audio32[0]);
+        ReduceSpectrum(m_audio_spectrum.right, m_audio32[1]);
+    }
+    if (! m_audio_updates.empty()) {
+        audio::Spectrum16 average;
+        for (usize i = 0; i < average.size(); ++i)
+            average[i] = (m_audio16[0][i] + m_audio16[1][i]) * 0.5f;
+        for (const auto& update : m_audio_updates)
+            update(average, static_cast<float>(m_scene->frameTime));
+    }
     /*
         using namespace std::chrono;
         auto nowTime = system_clock::to_time_t(system_clock::now());
@@ -31,7 +58,8 @@ void WPShaderValueUpdater::FrameBegin() {
     m_mouseDelayedTime = new_time;
     double t           = new_time / m_parallax.delay;
     m_mousePos         = std::array { (float)algorism::lerp(t, m_mousePos[0], m_mousePosInput[0]),
-                              (float)algorism::lerp(t, m_mousePos[1], m_mousePosInput[1]) };
+                                      (float)algorism::lerp(t, m_mousePos[1], m_mousePosInput[1]) };
+    for (auto& update : m_text_updates) update();
 }
 
 void WPShaderValueUpdater::FrameEnd() {}
@@ -73,6 +101,13 @@ void WPShaderValueUpdater::InitUniforms(SceneNode* pNode, const ExistsUniformOp&
     info.has_TEXELSIZEHALF = existsOp(G_TEXELSIZEHALF);
     info.has_SCREEN        = existsOp(G_SCREEN);
     info.has_LP            = existsOp(G_LP);
+    for (usize i = 0; i < WE_AUDIO_SPECTRUM_NAMES.size(); ++i) {
+        for (usize ch = 0; ch < WE_AUDIO_SPECTRUM_NAMES[i].size(); ++ch) {
+            info.has_audio[i][ch] = existsOp(WE_AUDIO_SPECTRUM_NAMES[i][ch]);
+            if (info.has_audio[i][ch] && ! m_audio_monitor)
+                m_audio_monitor = audio::AudioSpectrumMonitor::Acquire();
+        }
+    }
 
     std::accumulate(begin(info.texs), end(info.texs), 0, [&existsOp](uint index, auto& value) {
         value.has_resolution = existsOp(WE_GLTEX_RESOLUTION_NAMES[index]);
@@ -143,12 +178,14 @@ void WPShaderValueUpdater::UpdateUniforms(SceneNode* pNode, sprite_map_t& sprite
     }
     if (reqM || reqMVP || reqMI || reqMVPI) {
         Matrix4d modelTrans = pNode->ModelTrans();
-        if (hasNodeData && cam_name != "effect") {
+        if (hasNodeData) {
             const auto& nodeData = m_nodeDataMap.at(pNode);
-            if (m_parallax.enable) {
-                Vector3f nodePos = pNode->Translate();
-                Vector2f depth(&nodeData.parallaxDepth[0]);
-                Vector2f ortho { (float)m_scene->ortho[0], (float)m_scene->ortho[1] };
+            if (nodeData.useIdentityModelTransform) {
+                modelTrans.setIdentity();
+            } else if (m_parallax.enable && cam_name != "effect") {
+                const Vector3f nodePos = modelTrans.block<3, 1>(0, 3).cast<float>();
+                Vector2f       depth(&nodeData.parallaxDepth[0]);
+                Vector2f       ortho { (float)m_scene->ortho[0], (float)m_scene->ortho[1] };
                 // flip mouse y axis
                 Vector2f mouseVec =
                     Scaling(1.0f, -1.0f) * (Vector2f { 0.5f, 0.5f } - Vector2f(&m_mousePos[0]));
@@ -190,6 +227,15 @@ void WPShaderValueUpdater::UpdateUniforms(SceneNode* pNode, sprite_map_t& sprite
 
     if (info.has_DAYTIME) updateOp(G_DAYTIME, (float)m_dayTime);
 
+    for (usize ch = 0; ch < WE_AUDIO_SPECTRUM_NAMES[0].size(); ++ch) {
+        if (info.has_audio[0][ch]) updateOp(WE_AUDIO_SPECTRUM_NAMES[0][ch], m_audio16[ch]);
+        if (info.has_audio[1][ch]) updateOp(WE_AUDIO_SPECTRUM_NAMES[1][ch], m_audio32[ch]);
+        if (info.has_audio[2][ch]) {
+            updateOp(WE_AUDIO_SPECTRUM_NAMES[2][ch],
+                     ch == 0 ? m_audio_spectrum.left : m_audio_spectrum.right);
+        }
+    }
+
     if (info.has_POINTERPOSITION) updateOp(G_POINTERPOSITION, m_mousePos);
 
     if (info.has_TEXELSIZE) updateOp(G_TEXELSIZE, m_texelSize);
@@ -225,7 +271,8 @@ void WPShaderValueUpdater::UpdateUniforms(SceneNode* pNode, sprite_map_t& sprite
         for (auto& l : m_scene->lights) {
             if (i == 4) break;
             assert(l->node() != nullptr);
-            const auto& trans = l->node()->Translate();
+            l->node()->UpdateTrans();
+            const Vector3f trans = l->node()->ModelTrans().block<3, 1>(0, 3).cast<float>();
             std::copy(trans.begin(), trans.end(), lights.begin() + i * 4);
             if (i < 3) {
                 const auto& color = l->premultipliedColor();
@@ -240,6 +287,11 @@ void WPShaderValueUpdater::UpdateUniforms(SceneNode* pNode, sprite_map_t& sprite
 
 void WPShaderValueUpdater::SetNodeData(void* nodeAddr, const WPShaderValueData& data) {
     m_nodeDataMap[nodeAddr] = data;
+}
+
+void WPShaderValueUpdater::AddAudioUpdate(AudioUpdate update) {
+    if (! m_audio_monitor) m_audio_monitor = audio::AudioSpectrumMonitor::Acquire();
+    m_audio_updates.push_back(std::move(update));
 }
 
 void WPShaderValueUpdater::SetTexelSize(float x, float y) { m_texelSize = { x, y }; }

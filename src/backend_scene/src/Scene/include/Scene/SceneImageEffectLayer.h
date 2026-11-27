@@ -44,7 +44,6 @@ public:
     auto&       GetEffect(std::size_t index) { return m_effects.at(index); }
     const auto& FirstTarget() const { return m_pingpong_a; }
     SceneMesh&  FinalMesh() const { return *m_final_mesh; }
-    SceneNode&  FinalNode() const { return *m_final_node; }
     void        SetFinalBlend(BlendMode m) { m_final_blend = m; }
     // When true, ResolveEffect writes the final output to a per-node offscreen RT instead of
     // SpecTex_Default, so invisible dependency nodes don't composite into the main scene.
@@ -60,9 +59,9 @@ private:
 
     bool fullscreen { false };
     bool m_is_offscreen { false };
+    bool m_resolved { false };
     //    std::vector<float> m_size;
     std::unique_ptr<SceneMesh> m_final_mesh;
-    std::unique_ptr<SceneNode> m_final_node;
     BlendMode                  m_final_blend;
 
     std::vector<std::shared_ptr<SceneImageEffect>> m_effects;

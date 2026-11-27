@@ -8,8 +8,10 @@
 #include "SpecTexs.hpp"
 #include "wpscene/WPMaterial.h"
 #include "WPShaderParser.hpp"
-#include <optional>
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <optional>
 
 using namespace wallpaper;
 
@@ -33,6 +35,197 @@ std::optional<WPPuppet::PlayMode> ToPlayMode(std::string_view m) {
 
     LOG_ERROR("unknown puppet animation play mode \"%s\"", m.data());
     return std::nullopt;
+}
+
+constexpr float pose_tolerance = 1e-4f;
+
+struct BoneBounds {
+    Eigen::Vector2f minimum = Eigen::Vector2f::Constant(std::numeric_limits<float>::infinity());
+    Eigen::Vector2f maximum = Eigen::Vector2f::Constant(-std::numeric_limits<float>::infinity());
+    bool            blended { false };
+
+    void Add(const Eigen::Vector2f& point) {
+        minimum = minimum.cwiseMin(point);
+        maximum = maximum.cwiseMax(point);
+    }
+
+    bool HasArea() const { return ! blended && (maximum.array() > minimum.array()).all(); }
+
+    float Overlap(const BoneBounds& other) const {
+        const auto  intersect = maximum.cwiseMin(other.maximum) - minimum.cwiseMax(other.minimum);
+        const float area =
+            std::min((maximum - minimum).prod(), (other.maximum - other.minimum).prod());
+        return intersect.cwiseMax(0.0f).prod() / area;
+    }
+};
+
+struct ActiveAnimation {
+    const WPPuppet::Animation& animation;
+    double                     rate;
+};
+
+enum class BoneMotion
+{
+    Other,
+    Static,
+    Closing
+};
+
+struct ClosingBone {
+    u32    index;
+    double time;
+};
+
+BoneMotion ClassifyBone(const std::vector<ActiveAnimation>& animations, usize bone,
+                        double& closing_time) {
+    for (const auto& active : animations) {
+        const auto& frames = active.animation.bframes_array[bone].frames;
+        const auto& rest   = frames.front();
+        if (! rest.scale.isApprox(Eigen::Vector3f::Ones(), pose_tolerance))
+            return BoneMotion::Other;
+        if (active.rate == 0.0) continue;
+        bool  changes_scale = false;
+        float minimum_scale = 1.0f;
+        usize closing_frame = 0;
+        for (usize i = 0; i < static_cast<usize>(active.animation.length); ++i) {
+            const auto& frame = frames[i];
+            if (! frame.scale.allFinite() || ! frame.position.allFinite() ||
+                ! frame.angle.allFinite() ||
+                (frame.position - rest.position).cwiseAbs().maxCoeff() > pose_tolerance ||
+                (frame.angle - rest.angle).cwiseAbs().maxCoeff() > pose_tolerance)
+                return BoneMotion::Other;
+            const auto delta = frame.scale - rest.scale;
+            changes_scale |= delta.cwiseAbs().maxCoeff() > pose_tolerance;
+            if (const auto frame_scale = frame.scale.minCoeff(); frame_scale < minimum_scale) {
+                minimum_scale = frame_scale;
+                closing_frame = i;
+            }
+        }
+        if (! changes_scale) continue;
+        if (closing_time > 0.0 || minimum_scale < -pose_tolerance || minimum_scale >= 0.1)
+            return BoneMotion::Other;
+        closing_time =
+            static_cast<double>(closing_frame) * active.animation.frame_time / active.rate;
+        if (! std::isfinite(closing_time) || closing_time <= 0.0) return BoneMotion::Other;
+    }
+    return closing_time > 0.0 ? BoneMotion::Closing : BoneMotion::Static;
+}
+
+std::vector<u32> BlinkRemap(const WPMdl&                                   mdl,
+                            std::span<const WPPuppetLayer::AnimationLayer> layers) {
+    if (! mdl.puppet || layers.empty() || mdl.puppet->bones.size() < 3) return {};
+    const auto& puppet     = *mdl.puppet;
+    const usize bone_count = puppet.bones.size();
+
+    std::vector<ActiveAnimation> active;
+    for (const auto& layer : layers) {
+        if (! layer.visible) continue;
+        if (! std::isfinite(layer.blend) || layer.blend < 0 || layer.blend > 1) return {};
+        const auto anim = std::ranges::find(puppet.anims, layer.id, &WPPuppet::Animation::id);
+        if (anim == puppet.anims.end()) continue;
+        if (layer.cur_time != 0 || ! std::isfinite(layer.rate) || layer.rate < 0 ||
+            anim->length <= 0 || anim->bframes_array.size() < bone_count ||
+            std::ranges::any_of(
+                anim->bframes_array,
+                [&](const auto& track) {
+                    return track.frames.size() < static_cast<usize>(anim->length);
+                }))
+            return {};
+        if (layer.blend > 0) active.push_back({ *anim, layer.rate });
+    }
+    if (active.empty()) return {};
+
+    // This compatibility rule is for flat layers without geometry on the root.
+    std::vector<BoneBounds> bounds(bone_count);
+    for (const auto& vertex : mdl.vertexs) {
+        const Eigen::Vector2f point(vertex.position[0], vertex.position[1]);
+        const auto            weighted = std::ranges::count_if(vertex.weight, [](float weight) {
+            return weight > 0;
+        });
+        for (usize i = 0; i < vertex.weight.size(); ++i) {
+            if (! (vertex.weight[i] > 0)) continue;
+            const auto bone = vertex.blend_indices[i];
+            if (bone == 0 || bone >= bone_count || ! point.allFinite()) return {};
+            auto& box = bounds[bone];
+            box.Add(point);
+            box.blended |= weighted != 1;
+        }
+    }
+
+    std::vector<ClosingBone> closing;
+    std::vector<u32>         stationary;
+    for (u32 bone = 1; bone < bone_count; ++bone) {
+        if (! bounds[bone].HasArea()) continue;
+        double     closing_time = 0.0;
+        const auto motion       = ClassifyBone(active, bone, closing_time);
+        if (motion == BoneMotion::Closing) closing.push_back({ bone, closing_time });
+        if (motion == BoneMotion::Static) stationary.push_back(bone);
+    }
+    if (closing.empty()) return {};
+
+    // The eye repair applies only when each closing group has one distinct
+    // overlapping stationary group, with no equally good match.
+    std::vector<u32> remap(bone_count);
+    for (u32 bone = 0; bone < bone_count; ++bone) remap[bone] = bone;
+    std::vector<bool> claimed(bone_count);
+    for (const auto bone : stationary) {
+        u32   target = bone;
+        float best   = 0.5f;
+        bool  tied   = false;
+        for (const auto& [closer, _] : closing) {
+            if (puppet.bones[bone].parent != puppet.bones[closer].parent) continue;
+            const float overlap = bounds[bone].Overlap(bounds[closer]);
+            if (overlap <= 0.5f) continue;
+            if (target != bone && std::abs(overlap - best) <= pose_tolerance) {
+                tied = true;
+            } else if (overlap > best) {
+                best   = overlap;
+                target = closer;
+                tied   = false;
+            }
+        }
+        if (tied) return {};
+        if (target == bone) continue;
+        if (claimed[target]) return {};
+        claimed[target] = true;
+        remap[bone]     = target;
+    }
+    if (! std::ranges::all_of(closing, [&](const ClosingBone& bone) {
+            return claimed[bone.index];
+        }))
+        return {};
+
+    WPPuppetLayer layer(mdl.puppet);
+    layer.prepared(layers);
+    const auto initial = layer.PoseAt(0.0);
+    for (const auto bone : stationary) {
+        const auto target = remap[bone];
+        if (target == bone) continue;
+        const auto identity = Eigen::Matrix4f::Identity();
+        if (! initial[bone].matrix().isApprox(identity, pose_tolerance) ||
+            ! initial[target].matrix().isApprox(identity, pose_tolerance))
+            return {};
+    }
+    // Confirm that the actual composed GPU transform closes at the candidate
+    // frame. A parent or a mix of clips can change the local track's effect.
+    std::ranges::sort(closing, {}, &ClosingBone::time);
+    double                       sampled_time = 0.0;
+    std::vector<Eigen::Affine3f> pose;
+    for (const auto& [bone, time] : closing) {
+        if (sampled_time != time) {
+            if (std::ranges::any_of(layers, [&](const auto& layer) {
+                    return layer.visible && ! std::isfinite(time * layer.rate);
+                }))
+                return {};
+            pose         = layer.PoseAt(time);
+            sampled_time = time;
+        }
+        const auto& transform = pose[bone].matrix();
+        if (! transform.allFinite() ||
+            pose[bone].linear().leftCols<2>().colwise().norm().minCoeff() >= 0.1f)
+            return {};
+    }
+    return remap;
 }
 } // namespace
 
@@ -381,7 +574,8 @@ bool WPMdlParser::Parse(std::string_view path, fs::VFS& vfs, WPMdl& mdl) try {
     return false;
 }
 
-void WPMdlParser::GenPuppetMesh(SceneMesh& mesh, const WPMdl& mdl) {
+void WPMdlParser::GenPuppetMesh(SceneMesh& mesh, const WPMdl& mdl,
+                                std::span<const WPPuppetLayer::AnimationLayer> layers) {
     SceneVertexArray vertex({ { WE_IN_POSITION.data(), VertexType::FLOAT3 },
                               { WE_IN_BLENDINDICES.data(), VertexType::UINT4 },
                               { WE_IN_BLENDWEIGHTS.data(), VertexType::FLOAT4 },
@@ -391,15 +585,18 @@ void WPMdlParser::GenPuppetMesh(SceneMesh& mesh, const WPMdl& mdl) {
     // Clamp blend indices to [0, bone_count-1] to prevent OOB GPU array access in
     // g_Bones[a_BlendIndices.x] which causes VK_ERROR_DEVICE_LOST on strict GPU drivers.
     // Unused slots in the MDL may carry sentinel values (e.g. 0xFF) with weight=0.
-    uint32_t bone_count = mdl.puppet ? (uint32_t)mdl.puppet->bones.size() : 1u;
+    const u32  bone_count = mdl.puppet ? (u32)mdl.puppet->bones.size() : 1u;
+    const auto remap      = BlinkRemap(mdl, layers);
 
     std::array<float, 16> one_vert;
-    auto                  to_one = [bone_count](const WPMdl::Vertex& in, decltype(one_vert)& out) {
+    auto to_one = [bone_count, &remap](const WPMdl::Vertex& in, decltype(one_vert)& out) {
         uint offset = 0;
         memcpy(out.data() + 4 * (offset++), in.position.data(), sizeof(in.position));
         std::array<uint32_t, 4> safe_indices;
-        for (int j = 0; j < 4; j++)
-            safe_indices[j] = in.blend_indices[j] < bone_count ? in.blend_indices[j] : 0u;
+        for (usize j = 0; j < safe_indices.size(); ++j) {
+            const auto bone = in.blend_indices[j] < bone_count ? in.blend_indices[j] : 0u;
+            safe_indices[j] = in.weight[j] > 0 && ! remap.empty() ? remap[bone] : bone;
+        }
         memcpy(out.data() + 4 * (offset++), safe_indices.data(), sizeof(safe_indices));
         memcpy(out.data() + 4 * (offset++), in.weight.data(), sizeof(in.weight));
         memcpy(out.data() + 4 * (offset++), in.texcoord.data(), sizeof(in.texcoord));

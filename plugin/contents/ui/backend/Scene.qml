@@ -38,6 +38,14 @@ Item{
         }
     }
 
+    Timer {
+        id: resizeTimer
+        interval: 100
+        onTriggered: {
+            if (player.needsResize()) background.recreateScene(sceneItem);
+        }
+    }
+
     SceneViewer {
         id: player
         anchors.fill: parent
@@ -49,6 +57,9 @@ Item{
         speed: background.speed
         assets: sceneItem.assets
         userProperties: sceneItem.userPropsJson
+        onWidthChanged: resizeTimer.restart()
+        onHeightChanged: resizeTimer.restart()
+        onRenderScaleChanged: resizeTimer.restart()
         Component.onCompleted: {
             player.setAcceptMouse(true);
             player.setAcceptHover(true);

@@ -19,7 +19,7 @@ Matrix4d SceneNode::GetLocalTrans() const {
 }
 
 void SceneNode::UpdateTrans() {
-    if (! m_dirty) return;
+    if (! m_dirty && ! AnimatedTransform()) return;
     m_dirty = false;
 
     if (m_parent) {

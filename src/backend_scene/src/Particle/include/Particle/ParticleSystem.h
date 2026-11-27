@@ -68,6 +68,7 @@ public:
     ParticleInstance* QueryNewInstance();
 
     void AddEmitter(ParticleEmittOp&&);
+    void SetRate(double rate) { m_rate = rate; }
     void AddInitializer(ParticleInitOp&&);
     void AddOperator(ParticleOperatorOp&&);
 

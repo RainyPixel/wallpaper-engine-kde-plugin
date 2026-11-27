@@ -1,8 +1,7 @@
 enable_testing()
 
 get_filename_component(SCENE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-set(DOCTEST_INCLUDE_DIR
-    "${SCENE_DIR}/third_party/nlohmann/tests/thirdparty/doctest")
+set(DOCTEST_INCLUDE_DIR "${SCENE_DIR}/third_party/doctest")
 set(SRC_DIR "${SCENE_DIR}/src")
 
 add_executable(backend_scene_tests
@@ -43,6 +42,7 @@ add_executable(backend_scene_parser_tests
     test_WPMdlParser.cpp
     test_WPMaterial.cpp
     test_WPSceneParser.cpp
+    test_WPSceneScript.cpp
     test_SceneLoader.cpp
     test_SceneWallpaper.cpp
 )

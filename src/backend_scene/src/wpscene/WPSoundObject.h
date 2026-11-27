@@ -21,6 +21,7 @@ struct WPSoundObject {
     float                    mintime { 0.0f };
     float                    volume { 1.0f };
     bool                     visible { true };
+    bool                     startSilent { false };
     std::string              name;
     std::vector<std::string> sound;
 
@@ -30,6 +31,7 @@ struct WPSoundObject {
         GET_JSON_NAME_VALUE_NOWARN(json, "mintime", mintime);
         GET_JSON_NAME_VALUE_NOWARN(json, "maxtime", maxtime);
         GET_JSON_NAME_VALUE_NOWARN(json, "visible", visible);
+        GET_JSON_NAME_VALUE_NOWARN(json, "startsilent", startSilent);
         GET_JSON_NAME_VALUE_NOWARN(json, "name", name);
         if (! json.contains("sound") || ! json.at("sound").is_array()) {
             return false;

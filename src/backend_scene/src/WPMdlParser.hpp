@@ -58,7 +58,8 @@ public:
     static void AddPuppetShaderInfo(WPShaderInfo& info, const WPMdl& mdl);
     static void AddPuppetMatInfo(wpscene::WPMaterial& mat, const WPMdl& mdl);
 
-    static void GenPuppetMesh(SceneMesh& mesh, const WPMdl& mdl);
+    static void GenPuppetMesh(SceneMesh& mesh, const WPMdl& mdl,
+                              std::span<const WPPuppetLayer::AnimationLayer> layers = {});
 };
 
 } // namespace wallpaper

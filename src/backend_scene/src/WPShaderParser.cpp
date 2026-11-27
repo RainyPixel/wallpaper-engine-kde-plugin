@@ -8,20 +8,17 @@
 #include "Fs/VFS.h"
 #include "Utils/Sha.hpp"
 #include "Utils/String.h"
-#include "WPCommon.hpp"
-
 #include "Vulkan/ShaderComp.hpp"
 
+#include <charconv>
+#include <filesystem>
+#include <map>
+#include <mutex>
 #include <regex>
 #include <stack>
-#include <charconv>
 #include <string>
 
 static constexpr std::string_view SHADER_PLACEHOLD { "__SHADER_PLACEHOLD__" };
-
-// Invalidate shaders generated before the stage and conversion fixes.
-#define SHADER_DIR    "spvs02"
-#define SHADER_SUFFIX "spvs"
 
 using namespace wallpaper;
 
@@ -215,6 +212,21 @@ inline void ParseWPShader(const std::string& src, WPShaderInfo* pWPShaderInfo,
     }
 }
 
+std::string MaskComments(const std::string& src) {
+    std::string             code = src;
+    static const std::regex comments(R"(//[^\n]*|/\*[\s\S]*?\*/)");
+    for (auto it = std::sregex_iterator(src.begin(), src.end(), comments);
+         it != std::sregex_iterator();
+         ++it) {
+        const usize begin = it->position();
+        const usize end   = begin + it->length();
+        for (usize i = begin; i < end; ++i) {
+            if (code[i] != '\n') code[i] = ' ';
+        }
+    }
+    return code;
+}
+
 inline usize FindIncludeInsertPos(const std::string& src, usize startPos) {
     /* rule:
     after attribute/varying/uniform/struct
@@ -254,17 +266,10 @@ inline usize FindIncludeInsertPos(const std::string& src, usize startPos) {
     usize pos;
     {
         // Keep offsets while ignoring comments when locating a declaration's end.
-        std::string      code = src;
-        const std::regex comments(R"(//[^\n]*|/\*[\s\S]*?\*/)");
-        for (auto it = std::sregex_iterator(src.begin(), src.end(), comments);
-             it != std::sregex_iterator();
-             ++it) {
-            for (usize i = (usize)it->position(); i < (usize)(it->position() + it->length()); ++i)
-                if (code[i] != '\n') code[i] = ' ';
-        }
-        const std::regex reAfters(R"((^|\n)[ \t]*(attribute|varying|uniform|struct)[ \t])");
-        const usize      declarationPos = searchLast(code, reAfters);
-        usize            afterPos       = declarationPos;
+        const std::string code = MaskComments(src);
+        const std::regex  reAfters(R"((^|\n)[ \t]*(attribute|varying|uniform|struct)[ \t])");
+        const usize       declarationPos = searchLast(code, reAfters);
+        usize             afterPos       = declarationPos;
         if (declarationPos != std::string::npos) {
             afterPos         = nextLinePos(code, declarationPos + 1);
             const auto start = code.find_first_not_of(" \t\r\n", declarationPos);
@@ -315,11 +320,30 @@ inline EShLanguage ToGLSL(ShaderType type) {
     }
 }
 
-inline std::string Preprocessor(const std::string& in_src, ShaderType type, const Combos& combos,
-                                WPPreprocessorInfo& process_info) {
-    std::string res;
+void RemoveStrayEndif(std::string& source) {
+    static const std::regex directive(R"(^[ \t]*(#[ \t]*(if|ifdef|ifndef|endif)\b)([^\n]*))",
+                                      std::regex::multiline);
+    const auto              code  = MaskComments(source);
+    usize                   depth = 0;
+    for (auto it = std::sregex_iterator(code.begin(), code.end(), directive);
+         it != std::sregex_iterator();
+         ++it) {
+        const usize begin = it->position();
+        if (begin >= 2 && code[begin - 2] == '\\') continue;
+        if ((*it)[2] != "endif") {
+            ++depth;
+        } else if (depth > 0) {
+            --depth;
+        } else if ((*it)[3].str().find_first_not_of(" \t") == std::string::npos) {
+            // Some Workshop shaders contain an extra #endif. Keep line numbers and comments.
+            std::fill_n(source.begin() + it->position(1), it->length(1), ' ');
+        }
+    }
+}
 
-    std::string src = wallpaper::WPShaderParser::PreShaderHeader(in_src, combos, type);
+bool Preprocess(WPShaderUnit& unit, const Combos& combos) {
+    std::string res;
+    std::string src = WPShaderParser::PreShaderHeader(unit.src, combos, unit.stage);
     // Workshop shaders are Windows-authored (CRLF). glslang's preprocessor drops
     // whatever follows a CRLF-terminated directive at the end of the file
     // ("#endif\r\n}" loses the brace -> "unexpected end of file"), so normalise
@@ -338,6 +362,7 @@ inline std::string Preprocessor(const std::string& in_src, ShaderType type, cons
         src.swap(lf);
         if (! src.empty() && src.back() != '\n') src += '\n';
     }
+    RemoveStrayEndif(src);
     // workaround #require directive
     {
         std::regex re_require("(^|\r?\n)#require (.+)(\r?\n)");
@@ -345,21 +370,26 @@ inline std::string Preprocessor(const std::string& in_src, ShaderType type, cons
     }
 
     glslang::TShader::ForbidIncluder includer;
-    glslang::TShader                 shader(ToGLSL(type));
+    glslang::TShader                 shader(ToGLSL(unit.stage));
     const EShMessages emsg { (EShMessages)(EShMsgDefault | EShMsgSpvRules | EShMsgRelaxedErrors |
                                            EShMsgSuppressWarnings | EShMsgVulkanRules) };
 
     auto* data = src.c_str();
     shader.setStrings(&data, 1);
-    shader.preprocess(&vulkan::DefaultTBuiltInResource,
-                      110,
-                      EProfile::ECoreProfile,
-                      false,
-                      false,
-                      emsg,
-                      &res,
-                      includer);
+    if (! shader.preprocess(&vulkan::DefaultTBuiltInResource,
+                            110,
+                            EProfile::ECoreProfile,
+                            false,
+                            false,
+                            emsg,
+                            &res,
+                            includer)) {
+        LOG_ERROR("glslang preprocess failed: %s", shader.getInfoLog());
+        return false;
+    }
 
+    auto& process_info = unit.preprocess_info;
+    process_info       = {};
     // (?:^|\s) lets us match "out vec2 foo;" at column 0 (no qualifier) as well as
     // "smooth out vec4 foo;" where the qualifier precedes the keyword.
     std::regex re_io(R"((?:^|\s)(in|out)\s[\s\w]+\s(\w+)\s*;)",
@@ -386,7 +416,8 @@ inline std::string Preprocessor(const std::string& in_src, ShaderType type, cons
         if (ec != std::errc()) continue;
         process_info.active_tex_slots.insert(slot);
     }
-    return res;
+    unit.src = std::move(res);
+    return true;
 }
 
 inline std::string Finalprocessor(const WPShaderUnit& unit, const WPPreprocessorInfo* pre,
@@ -417,9 +448,340 @@ inline std::string Finalprocessor(const WPShaderUnit& unit, const WPPreprocessor
     return std::regex_replace(unit.src, re_hold, insert_str);
 }
 
+using VaryingTypes = std::map<std::string, std::string, std::less<>>;
+
+VaryingTypes VertexOutputTypes(const std::string& vertex) {
+    static const std::regex output(R"(\bout\s+(float|vec[234])\s+([A-Za-z_]\w*)\s*;)");
+    VaryingTypes            types;
+    for (auto it = std::sregex_iterator(vertex.begin(), vertex.end(), output);
+         it != std::sregex_iterator();
+         ++it) {
+        const auto [entry, inserted] = types.emplace((*it)[2].str(), (*it)[1].str());
+        if (! inserted) entry->second.clear();
+    }
+    return types;
+}
+
+// Only type the expressions needed for the Workshop conversions below. An
+// unrecognized operand or conflicting declaration leaves the source untouched.
+class ShaderExpressions {
+public:
+    struct Token {
+        std::string_view text;
+        usize            offset;
+        usize            end;
+    };
+
+    explicit ShaderExpressions(const std::string& source): m_source(source) {
+        static const std::regex token(
+            R"([A-Za-z_]\w*|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[fFuU]?|[=!<>+\-*/]=|\+\+|--|[^\s])");
+        std::vector<usize> openings;
+        for (auto it = std::sregex_iterator(source.begin(), source.end(), token);
+             it != std::sregex_iterator();
+             ++it) {
+            const usize begin = it->position();
+            const auto  word  = std::string_view(source).substr(begin, it->length());
+            const usize i     = m_tokens.size();
+            m_tokens.push_back({ word, begin, i + 1 });
+            if (word == "(" || word == "[" || word == "{") {
+                openings.push_back(i);
+            } else if ((word == ")" || word == "]" || word == "}") && ! openings.empty()) {
+                m_tokens[openings.back()].end = i + 1;
+                openings.pop_back();
+            }
+            if (i >= 1 && Text(i - 1) == "struct") m_struct_types.insert(word);
+        }
+
+        for (usize i = 0; i + 2 < m_tokens.size(); ++i) {
+            const auto type = Text(i);
+            if (! IsType(type) || ! IsIdentifier(Text(i + 1))) continue;
+            const auto name = Text(i + 1);
+            if (Text(i + 2) == "(" && End(i + 2) > i + 3) {
+                const auto [entry, inserted] = m_functions.emplace(name, i + 2);
+                if (! inserted) entry->second = 0;
+                continue;
+            }
+            for (usize var = i + 1; IsIdentifier(Text(var));) {
+                const auto next = Text(var + 1);
+                if (next != "=" && next != "[" && next != "," && next != ";" && next != ")") break;
+                const auto value_type        = next == "[" ? std::string_view {} : type;
+                const auto [entry, inserted] = m_symbols.emplace(Text(var), Symbol { value_type });
+                if (! inserted) {
+                    entry->second.unique = false;
+                    if (entry->second.type != value_type) entry->second.type = {};
+                }
+                const usize after = ArgumentEnd(var + 1, m_tokens.size());
+                if (Text(after) != ",") break;
+                var = after + 1;
+            }
+        }
+    }
+
+    std::string Rewrite(ShaderType stage, const VaryingTypes& vertex_outputs) {
+        for (usize i = 0; i < m_tokens.size(); ++i) {
+            const auto word = Text(i);
+            if (Text(i + 1) == "(" && IsIdentifier(word) && (i == 0 || Text(i - 1) != ".")) {
+                RewriteCall(i);
+            } else if (word == "(") {
+                RewriteComparison(i);
+            } else if (word == "?" && i > 1 && IsNumber(Text(i - 1)) &&
+                       (Text(i - 2) == "=" || Text(i - 2) == "(" || Text(i - 2) == "," ||
+                        Text(i - 2) == "return" || Text(i - 2) == "?" || Text(i - 2) == ":")) {
+                Wrap(i - 1, i, "bool");
+            } else if ((word == "=" || word == "+=" || word == "-=" || word == "*=" ||
+                        word == "/=") &&
+                       i > 0 && IsIdentifier(Text(i - 1)) && (i < 2 || Text(i - 2) != ".")) {
+                const auto type = TypeOf(Text(i - 1));
+                const auto end  = ArgumentEnd(i + 1, m_tokens.size());
+                if (end <= i + 1 || (Text(end) != "," && Text(end) != ";")) continue;
+                const int  width  = Width(i + 1, end);
+                const auto target = FloatWidth(type);
+                if (width > target && target > 0) Wrap(i + 1, end, type);
+                if (word == "=" && target > 1 && width == 1) Wrap(i + 1, end, type);
+                if (word == "=" && type == "int" && end == i + 2 && TypeOf(Text(i + 1)) == "float")
+                    Wrap(i + 1, end, type);
+            }
+        }
+        if (stage == ShaderType::FRAGMENT) RewriteFragmentInputs(vertex_outputs);
+        std::string result = m_source;
+        for (auto it = m_edits.rbegin(); it != m_edits.rend(); ++it)
+            result.replace(it->first, it->second.length, it->second.text);
+        return result;
+    }
+
+private:
+    struct Symbol {
+        std::string_view type;
+        bool             unique { true };
+    };
+
+    struct Edit {
+        usize       length { 0 };
+        std::string text;
+    };
+
+    static bool IsIdentifier(std::string_view text) {
+        return ! text.empty() &&
+               (std::isalpha(static_cast<unsigned char>(text.front())) || text.front() == '_');
+    }
+    static bool IsNumber(std::string_view text) {
+        return ! text.empty() && (std::isdigit(static_cast<unsigned char>(text.front())) ||
+                                  (text.front() == '.' && text.size() > 1));
+    }
+    bool IsType(std::string_view text) const {
+        return FloatWidth(text) != 0 || text == "int" || text == "uint" || text == "bool" ||
+               text == "double" || text == "void" || text.starts_with("mat") ||
+               text.starts_with("sampler") || text.starts_with("isampler") ||
+               text.starts_with("usampler") || text.starts_with("ivec") ||
+               text.starts_with("uvec") || text.starts_with("bvec") || text.starts_with("dvec") ||
+               m_struct_types.contains(text);
+    }
+    static int FloatWidth(std::string_view type) {
+        if (type == "float") return 1;
+        if (type == "vec2") return 2;
+        if (type == "vec3") return 3;
+        if (type == "vec4") return 4;
+        return 0;
+    }
+    std::string_view Text(usize i) const {
+        return i < m_tokens.size() ? m_tokens[i].text : std::string_view {};
+    }
+    usize            End(usize i) const { return m_tokens[i].end; }
+    std::string_view TypeOf(std::string_view name) const {
+        const auto it = m_symbols.find(name);
+        return it == m_symbols.end() ? std::string_view {} : it->second.type;
+    }
+    usize ArgumentEnd(usize begin, usize limit) const {
+        while (begin < limit && Text(begin) != "," && Text(begin) != ";" && Text(begin) != ")" &&
+               Text(begin) != "]" && Text(begin) != "}" && Text(begin) != "{")
+            begin = End(begin);
+        return begin;
+    }
+    bool IsSampler2D(usize begin, usize end) const {
+        return begin + 1 < end && Text(begin + 1) == "," && TypeOf(Text(begin)) == "sampler2D";
+    }
+    static bool Arithmetic(std::string_view text) {
+        return text == "+" || text == "-" || text == "*" || text == "/";
+    }
+
+    int Width(usize begin, usize end) const {
+        int width = 0;
+        for (usize i = begin; i < end;) {
+            if (Text(i) == "+" || Text(i) == "-") ++i;
+            if (i >= end) return 0;
+
+            const auto word    = Text(i);
+            int        operand = 0;
+            if (word == "(" && End(i) > i + 1 && End(i) <= end) {
+                operand = Width(i + 1, End(i) - 1);
+                i       = End(i);
+            } else if (Text(i + 1) == "(" && End(i + 1) > i + 2 && End(i + 1) <= end) {
+                operand = FloatWidth(word);
+                if ((word == "texture" || word == "textureLod") && ! m_functions.contains(word) &&
+                    IsSampler2D(i + 2, End(i + 1) - 1))
+                    operand = 4;
+                i = End(i + 1);
+            } else {
+                operand = FloatWidth(TypeOf(word));
+                if (IsNumber(word)) {
+                    // Integer literals are accepted by ordinary floating-point arithmetic.
+                    operand = word.ends_with('u') || word.ends_with('U') ? 0 : 1;
+                }
+                ++i;
+            }
+
+            if (operand > 1 && Text(i) == "." && i + 1 < end) {
+                const auto             selector = Text(i + 1);
+                const std::string_view xyzw = "xyzw", rgba = "rgba", stpq = "stpq";
+                if (selector.size() > 4 ||
+                    (selector.find_first_not_of(xyzw.substr(0, operand)) !=
+                         std::string_view::npos &&
+                     selector.find_first_not_of(rgba.substr(0, operand)) !=
+                         std::string_view::npos &&
+                     selector.find_first_not_of(stpq.substr(0, operand)) != std::string_view::npos))
+                    return 0;
+                operand = selector.size();
+                i += 2;
+            }
+            if (operand == 0 || (width > 1 && operand > 1 && width != operand)) return 0;
+            width = std::max(width, operand);
+            if (i == end) return width;
+            if (! Arithmetic(Text(i)) || ++i == end) return 0;
+        }
+        return 0;
+    }
+
+    void Wrap(usize begin, usize end, std::string_view type) {
+        const usize first = m_tokens[begin].offset;
+        const auto& last  = m_tokens[end - 1];
+        m_edits[first].text += std::string(type) + "(";
+        m_edits[last.offset + last.text.size()].text.insert(0, ")");
+    }
+
+    void RewriteComparison(usize open) {
+        // A parenthesized comparison can be an arithmetic operand. A control
+        // statement or a call owns its parentheses, including "if (...) ++x".
+        if (open == 0 || IsIdentifier(Text(open - 1)) || End(open) != open + 5) return;
+        const auto op    = Text(open + 2);
+        const auto after = Text(End(open));
+        if (op != "<" && op != ">" && op != "<=" && op != ">=" && op != "==" && op != "!=") return;
+        if ((Arithmetic(Text(open - 1)) || Arithmetic(after)) && Width(open + 1, open + 2) == 1 &&
+            Width(open + 3, open + 4) == 1)
+            Wrap(open, End(open), "float");
+    }
+
+    void RewriteCall(usize name_index) {
+        const auto  name = Text(name_index);
+        const usize open = name_index + 1;
+        if (End(open) <= open + 1) return;
+        const usize close    = End(open) - 1;
+        const auto  function = m_functions.find(name);
+        if (function != m_functions.end() && (function->second == 0 || function->second == open))
+            return;
+        if (function == m_functions.end() && name != "texture" && name != "textureLod" &&
+            name != "mix")
+            return;
+        std::vector<std::pair<usize, usize>> args;
+        for (usize start = open + 1; start < close;) {
+            const usize end = ArgumentEnd(start, close);
+            if (end == start || (end != close && Text(end) != ",")) return;
+            args.emplace_back(start, end);
+            start = end + 1;
+        }
+        if (function == m_functions.end() && (name == "texture" || name == "textureLod")) {
+            const usize minimum = name == "texture" ? 2 : 3;
+            if (args.size() >= minimum && args.size() <= 3 && IsSampler2D(open + 1, close)) {
+                const auto [begin, end] = args[1];
+                if (Width(begin, end) > 2) Wrap(begin, end, "vec2");
+            }
+        } else if (function == m_functions.end() && name == "mix" && args.size() == 3) {
+            const auto [first, first_end]   = args[0];
+            const auto [second, second_end] = args[1];
+            const int a = Width(first, first_end), b = Width(second, second_end);
+            // Keep the call's vector width when one operand is scalar.
+            if (a == 1 && b > 1) Wrap(first, first_end, "vec" + std::to_string(b));
+            if (b == 1 && a > 1) Wrap(second, second_end, "vec" + std::to_string(a));
+        } else if (function != m_functions.end()) {
+            usize                         param       = function->second + 1;
+            const usize                   param_close = End(function->second) - 1;
+            std::vector<std::string_view> input_types;
+            while (param < param_close) {
+                const usize end = ArgumentEnd(param, param_close);
+                while (Text(param) == "in" || Text(param) == "const") ++param;
+                // out/inout and any unmodeled signature parameter stay unchanged.
+                input_types.push_back(end == param + 2 ? Text(param) : std::string_view {});
+                param = end + 1;
+            }
+            if (input_types.size() != args.size()) return;
+            for (usize j = 0; j < args.size(); ++j) {
+                const int target        = FloatWidth(input_types[j]);
+                const auto [begin, end] = args[j];
+                if (target > 1 && Width(begin, end) > target) Wrap(begin, end, input_types[j]);
+            }
+        }
+    }
+
+    void RewriteFragmentInputs(const VaryingTypes& vertex_outputs) {
+        const auto main = m_functions.find("main");
+        if (main == m_functions.end() || main->second == 0) return;
+        const usize body = End(main->second);
+        if (Text(body) != "{" || End(body) <= body + 1) return;
+        const usize body_end = End(body) - 1;
+        for (usize i = 0; i < body; ++i) {
+            const auto type = Text(i + 1);
+            const auto name = Text(i + 2);
+            if (Text(i) != "in" || FloatWidth(type) == 0 || Text(i + 3) != ";") continue;
+            const auto symbol = m_symbols.find(name);
+            if (symbol == m_symbols.end() || ! symbol->second.unique) continue;
+
+            const auto vertex = vertex_outputs.find(name);
+            const auto vertex_width =
+                vertex == vertex_outputs.end() ? 0 : FloatWidth(vertex->second);
+            const bool        truncate = vertex_width > FloatWidth(type);
+            const std::string copy     = "wpLocal_" + std::string(name);
+            if (m_source.find(copy) != std::string::npos) continue;
+            bool               writable = false;
+            std::vector<usize> uses;
+            for (usize j = 1; j < m_tokens.size(); ++j) {
+                if (j == i + 2 || Text(j) != name || Text(j - 1) == ".") continue;
+                if (j <= body || j >= body_end) {
+                    uses.clear();
+                    break;
+                }
+                uses.push_back(j);
+                const auto after  = Text(j + 1) == "." ? Text(j + 3) : Text(j + 1);
+                const auto before = Text(j - 1);
+                writable |= after == "=" || after == "+=" || after == "-=" || after == "*=" ||
+                            after == "/=" || after == "++" || after == "--" || before == "++" ||
+                            before == "--";
+            }
+            if ((! truncate && ! writable) || uses.empty()) continue;
+            // Preserve the interface name and qualifiers. Truncate the matched
+            // vertex output only in the fragment's local copy.
+            std::string initializer(name);
+            if (truncate) {
+                const auto& input_type     = m_tokens[i + 1];
+                m_edits[input_type.offset] = { input_type.text.size(), vertex->second };
+                initializer                = std::string(type) + "(" + initializer + ")";
+            }
+            m_edits[m_tokens[body].offset + 1].text.insert(
+                0, "\n" + std::string(type) + " " + copy + " = " + initializer + ";\n");
+            for (const auto use : uses) m_edits[m_tokens[use].offset].text += "wpLocal_";
+        }
+    }
+
+    const std::string&                 m_source;
+    std::vector<Token>                 m_tokens;
+    std::set<std::string_view>         m_struct_types;
+    std::map<std::string_view, Symbol> m_symbols;
+    std::map<std::string_view, usize>  m_functions;
+    std::map<usize, Edit>              m_edits;
+};
+
 // Fix HLSL->GLSL implicit type conversion issues.
 // HLSL allows implicit float<->int conversions, GLSL/SPIR-V does not.
-inline std::string FixImplicitConversions(const std::string& src) {
+inline std::string FixImplicitConversions(const std::string& src, ShaderType stage,
+                                          const VaryingTypes& vertex_outputs) {
     std::string result = src;
 
     // Fix: "float VAR = int(EXPR)" -> "int VAR = int(EXPR)"
@@ -660,54 +1022,59 @@ inline std::string FixImplicitConversions(const std::string& src) {
         result = std::regex_replace(result, re, "float $1 = $2;");
     }
 
-    return result;
+    return ShaderExpressions(result).Rewrite(stage, vertex_outputs);
 }
 
-inline std::string GenSha1(std::span<const WPShaderUnit> units) {
-    std::string shas;
-    for (auto& unit : units) {
-        shas += utils::genSha1(unit.src);
+// Bump this namespace when translation or compiler options change. Old per-scene
+// entries lack this version and the compiler/stage identity in their key.
+constexpr std::string_view shader_cache_dir    = "/cache/spvs03/";
+constexpr std::string_view shader_cache_header = "SPVS0002";
+constexpr u32              spirv_magic         = 0x07230203;
+
+std::string ShaderCachePath(std::span<const WPShaderUnit> units) {
+    const auto  version = glslang::GetVersion();
+    std::string key = std::to_string(version.major) + "." + std::to_string(version.minor) + "." +
+                      std::to_string(version.patch) + version.flavor + '\n';
+    for (const auto& unit : units) {
+        key += std::to_string(ToGLSL(unit.stage)) + ":" + utils::genSha1(unit.src) + '\n';
     }
-    return utils::genSha1(shas);
-}
-inline std::string GetCachePath(std::string_view scene_id, std::string_view filename) {
-    return std::string("/cache/") + std::string(scene_id) + "/" SHADER_DIR "/" +
-           std::string(filename) + "." SHADER_SUFFIX;
+    return std::string(shader_cache_dir) + utils::genSha1(key) + ".spvs";
 }
 
-inline bool LoadShaderFromFile(std::vector<ShaderCode>& codes, fs::IBinaryStream& file) {
-    codes.clear();
-    i32 ver = ReadSPVVesion(file);
-
-    usize count = file.ReadUint32();
-    assert(count <= 16 && count >= 0);
-    if (count > 16) return false;
-
-    codes.resize(count);
-    for (usize i = 0; i < count; i++) {
-        auto& c = codes[i];
-
-        u32 size = file.ReadUint32();
-        assert(size % 4 == 0);
-        if (size % 4 != 0) return false;
-
-        c.resize(size / 4);
-        file.Read((char*)c.data(), size);
+bool LoadShaderFromFile(std::vector<ShaderCode>& codes, fs::IBinaryStream& file,
+                        usize stage_count) {
+    const auto file_size = file.Size();
+    char       header[shader_cache_header.size()];
+    if (file.Read(header, sizeof(header)) != sizeof(header) ||
+        std::string_view(header, sizeof(header)) != shader_cache_header ||
+        file.ReadUint32() != stage_count) {
+        return false;
     }
+
+    std::vector<ShaderCode> cached(stage_count);
+    for (auto& code : cached) {
+        const auto size   = file.ReadUint32();
+        const auto offset = file.Tell();
+        if (offset < 0 || offset > file_size || size > static_cast<usize>(file_size - offset) ||
+            size % sizeof(u32) != 0 || size <= 5 * sizeof(u32)) {
+            return false;
+        }
+        code.resize(size / sizeof(u32));
+        if (file.Read(code.data(), size) != size || code.front() != spirv_magic) return false;
+    }
+    if (file.Tell() != file_size) return false;
+    codes = std::move(cached);
     return true;
 }
 
-inline void SaveShaderToFile(std::span<const ShaderCode> codes, fs::IBinaryStreamW& file) {
-    char nop[256] { '\0' };
-
-    WriteSPVVesion(file, 1);
-    file.WriteUint32((u32)codes.size());
-    for (const auto& c : codes) {
-        u32 size = (u32)c.size() * 4;
+void SaveShaderToFile(std::span<const ShaderCode> codes, fs::IBinaryStreamW& file) {
+    file.Write(shader_cache_header.data(), shader_cache_header.size());
+    file.WriteUint32(static_cast<u32>(codes.size()));
+    for (const auto& code : codes) {
+        const auto size = static_cast<u32>(code.size() * sizeof(u32));
         file.WriteUint32(size);
-        file.Write((const char*)c.data(), size);
+        file.Write(code.data(), size);
     }
-    file.Write(nop, sizeof(nop));
 }
 
 } // namespace
@@ -759,11 +1126,14 @@ bool WPShaderParser::CompileToSpv(std::string_view scene_id, std::span<WPShaderU
                                   std::vector<ShaderCode>& codes, fs::VFS& vfs,
                                   WPShaderInfo*                    shader_info,
                                   std::span<const WPShaderTexInfo> texs) {
+    (void)scene_id;
     (void)texs;
+    codes.clear();
+    if (units.empty()) return false;
 
-    std::for_each(units.begin(), units.end(), [shader_info](auto& unit) {
-        unit.src = Preprocessor(unit.src, unit.stage, shader_info->combos, unit.preprocess_info);
-    });
+    for (auto& unit : units) {
+        if (! Preprocess(unit, shader_info->combos)) return false;
+    }
 
     auto compile = [](std::span<WPShaderUnit> units, std::vector<ShaderCode>& codes) {
         std::vector<vulkan::ShaderCompUnit> vunits(units.size());
@@ -774,8 +1144,12 @@ bool WPShaderParser::CompileToSpv(std::string_view scene_id, std::span<WPShaderU
             WPPreprocessorInfo* post_info =
                 i + 1 < units.size() ? &units[i + 1].preprocess_info : nullptr;
 
-            unit.src = Finalprocessor(unit, pre_info, post_info);
-            unit.src = FixImplicitConversions(unit.src);
+            unit.src                  = Finalprocessor(unit, pre_info, post_info);
+            const auto vertex_outputs = unit.stage == ShaderType::FRAGMENT && i > 0 &&
+                                                units[i - 1].stage == ShaderType::VERTEX
+                                            ? VertexOutputTypes(units[i - 1].src)
+                                            : VaryingTypes {};
+            unit.src = FixImplicitConversions(unit.src, unit.stage, vertex_outputs);
 
             vunit.src   = unit.src;
             vunit.stage = ToGLSL(unit.stage);
@@ -802,27 +1176,31 @@ bool WPShaderParser::CompileToSpv(std::string_view scene_id, std::span<WPShaderU
         return true;
     };
 
-    bool has_cache_dir = vfs.IsMounted("cache");
+    if (! vfs.IsMounted("cache")) return compile(units, codes);
 
-    if (has_cache_dir) {
-        std::string sha1            = GenSha1(units);
-        std::string cache_file_path = GetCachePath(scene_id, sha1);
-
-        if (vfs.Contains(cache_file_path)) {
-            auto cache_file = vfs.Open(cache_file_path);
-            if (! cache_file || ! ::LoadShaderFromFile(codes, *cache_file)) {
-                LOG_ERROR("load shader from \'%s\' failed", cache_file_path.c_str());
-                return false;
-            }
-        } else {
-            if (! compile(units, codes)) return false;
-            if (auto cache_file = vfs.OpenW(cache_file_path); cache_file) {
-                ::SaveShaderToFile(codes, *cache_file);
-            }
+    // Plasma can render multiple screens in one process. Serialize cache I/O so
+    // a reader never sees a half-written entry, without serializing compilation.
+    static std::mutex cache_mutex;
+    const auto        path = ShaderCachePath(units);
+    try {
+        const std::lock_guard lock(cache_mutex);
+        if (vfs.Contains(path)) {
+            const auto cache_file = vfs.Open(path);
+            if (cache_file && LoadShaderFromFile(codes, *cache_file, units.size())) return true;
+            LOG_ERROR("Invalid shader cache entry '%s', recompiling", path.c_str());
         }
-        return true;
-
-    } else {
-        return compile(units, codes);
+    } catch (const std::filesystem::filesystem_error& error) {
+        LOG_ERROR("Cannot read shader cache: %s", error.what());
     }
+
+    if (! compile(units, codes)) return false;
+    try {
+        const std::lock_guard lock(cache_mutex);
+        if (const auto cache_file = vfs.OpenW(path); cache_file) {
+            SaveShaderToFile(codes, *cache_file);
+        }
+    } catch (const std::filesystem::filesystem_error& error) {
+        LOG_ERROR("Cannot write shader cache: %s", error.what());
+    }
+    return true;
 }

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <cstdint>
 #include <chrono>
+#include <functional>
 
 #include <Eigen/Dense>
 
@@ -13,6 +14,7 @@
 #include "Core/MapSet.hpp"
 #include "SpriteAnimation.hpp"
 #include "WPPuppet.hpp"
+#include "Audio/AudioSpectrum.h"
 
 namespace wallpaper
 {
@@ -29,15 +31,16 @@ struct WPUniformInfo {
     bool has_ETVPI { false };
     bool has_VP { false };
 
-    bool has_BONES { false };
-    bool has_TIME { false };
-    bool has_DAYTIME { false };
-    bool has_POINTERPOSITION { false };
-    bool has_PARALLAXPOSITION { false };
-    bool has_TEXELSIZE { false };
-    bool has_TEXELSIZEHALF { false };
-    bool has_SCREEN { false };
-    bool has_LP { false };
+    bool                               has_BONES { false };
+    bool                               has_TIME { false };
+    bool                               has_DAYTIME { false };
+    bool                               has_POINTERPOSITION { false };
+    bool                               has_PARALLAXPOSITION { false };
+    bool                               has_TEXELSIZE { false };
+    bool                               has_TEXELSIZEHALF { false };
+    bool                               has_SCREEN { false };
+    bool                               has_LP { false };
+    std::array<std::array<bool, 2>, 3> has_audio {};
 
     struct Tex {
         bool has_resolution { false };
@@ -48,6 +51,7 @@ struct WPUniformInfo {
 
 struct WPShaderValueData {
     std::array<float, 2> parallaxDepth { 0.0f, 0.0f };
+    bool                 useIdentityModelTransform { false };
     // index + name
     std::vector<std::pair<usize, std::string>> renderTargets;
 
@@ -75,6 +79,11 @@ public:
     void SetTexelSize(float x, float y) override;
 
     void SetNodeData(void*, const WPShaderValueData&);
+    void AddTextUpdate(std::function<void()> update) {
+        m_text_updates.push_back(std::move(update));
+    }
+    using AudioUpdate = std::function<void(const audio::Spectrum16&, float)>;
+    void AddAudioUpdate(AudioUpdate update);
     void SetCameraParallax(const WPCameraParallax& value) { m_parallax = value; }
 
     void SetScreenSize(i32 w, i32 h) override { m_screen_size = { (float)w, (float)h }; }
@@ -92,6 +101,12 @@ public:
     std::array<float, 2> GetMousePosition() const { return m_mousePos; }
 
 private:
+    std::shared_ptr<audio::AudioSpectrumMonitor> m_audio_monitor;
+    audio::AudioSpectrum                         m_audio_spectrum;
+    std::array<audio::Spectrum16, 2>             m_audio16 {};
+    std::array<std::array<float, 32>, 2>         m_audio32 {};
+    std::vector<AudioUpdate>                     m_audio_updates;
+
     Scene*               m_scene;
     WPCameraParallax     m_parallax;
     double               m_dayTime { 0.0f };
@@ -109,7 +124,8 @@ private:
 
     std::array<float, 2> m_screen_size { 1920, 1080 };
 
-    Map<void*, WPShaderValueData> m_nodeDataMap;
-    Map<void*, WPUniformInfo>     m_nodeUniformInfoMap;
+    Map<void*, WPShaderValueData>      m_nodeDataMap;
+    Map<void*, WPUniformInfo>          m_nodeUniformInfoMap;
+    std::vector<std::function<void()>> m_text_updates;
 };
 } // namespace wallpaper

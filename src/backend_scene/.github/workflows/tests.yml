@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
@@ -24,7 +24,8 @@ jobs:
             cmake \
             pkg-config \
             liblz4-dev \
-            libeigen3-dev \
+            libfreetype-dev \
+            libpulse-dev \
             libgl-dev \
             libglvnd-dev \
             libvulkan-dev
@@ -33,7 +34,7 @@ jobs:
         run: cmake -B build -DBUILD_TESTS=ON
 
       - name: Build tests
-        run: cmake --build build --target backend_scene_tests -j$(nproc)
+        run: cmake --build build --target backend_scene_tests -j"$(nproc)"
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure

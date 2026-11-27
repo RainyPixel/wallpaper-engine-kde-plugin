@@ -8,6 +8,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLFunctions>
+#include <QtGui/QStyleHints>
 #include <QtQuick/QQuickWindow>
 
 #include <QtGui/QOffscreenSurface>
@@ -19,7 +20,10 @@
 #include <clocale>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <functional>
+#include <limits>
+#include <utility>
 
 #include "glExtra.hpp"
 #include "SceneWallpaper.hpp"
@@ -38,13 +42,6 @@ Q_LOGGING_CATEGORY(wekdeScene, "wekde.scene")
 
 namespace
 {
-void* get_proc_address(const char* name) {
-    QOpenGLContext* glctx = QOpenGLContext::currentContext();
-    if (! glctx) return nullptr;
-
-    return reinterpret_cast<void*>(glctx->getProcAddress(QByteArray(name)));
-}
-
 QSGTexture* createTextureFromGl(uint32_t handle, QSize size, QQuickWindow* window) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
     return QNativeInterface::QSGOpenGLTexture::fromNative(handle, window, size);
@@ -54,6 +51,19 @@ QSGTexture* createTextureFromGl(uint32_t handle, QSize size, QQuickWindow* windo
 #else
     return window->createTextureFromId(handle, size);
 #endif
+}
+
+uint16_t renderAxis(qreal logical, qreal scale) {
+    constexpr auto maxExtent = std::numeric_limits<uint16_t>::max();
+    const qreal    pixels    = logical * scale;
+    if (! std::isfinite(pixels) || pixels <= 1) return 1;
+    if (pixels >= maxExtent) return maxExtent;
+
+    // Round ties to even: a 1707-pixel logical extent at 1.5x can come from a
+    // 2560-pixel output after rounding its logical geometry.
+    const auto  whole    = static_cast<uint16_t>(pixels);
+    const qreal fraction = pixels - whole;
+    return whole + (fraction > 0.5 || (fraction == 0.5 && whole % 2 == 1));
 }
 
 wallpaper::FillMode ToWPFillMode(int fillMode) {
@@ -108,7 +118,7 @@ public:
     }
 
     // only at qt render thread
-    bool initGl() { return m_glex.init(get_proc_address); }
+    bool initGl() { return m_glex.init(); }
 
     // after gl, can run at any thread
     void initVulkan(uint16_t w, uint16_t h) {
@@ -244,6 +254,24 @@ void SceneObject::resizeFb() {
     size.setHeight(this->height());
 }
 
+QSize SceneObject::requestedRenderExtent() const {
+    const qreal scale = window()->effectiveDevicePixelRatio();
+    return { renderAxis(width(), scale), renderAxis(height(), scale) };
+}
+
+bool SceneObject::needsResize() const {
+    // Before a render node submits an initialization, it can use the current
+    // size directly. While that request runs, repeating it at the same size
+    // would restart the scene load.
+    const QSize submitted = m_submittedExtent.load();
+    return window() && submitted.isValid() && requestedRenderExtent() != submitted;
+}
+
+void SceneObject::itemChange(ItemChange change, const ItemChangeData& value) {
+    QQuickItem::itemChange(change, value);
+    if (change == ItemDevicePixelRatioHasChanged) Q_EMIT renderScaleChanged();
+}
+
 QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
     TextureNode* node = static_cast<TextureNode*>(oldNode);
     if (! node) {
@@ -252,8 +280,9 @@ QSGNode* SceneObject::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
                 return (QSGTexture*)nullptr;
             });
         if (node->initGl()) {
-            node->initVulkan(width() * window()->devicePixelRatio(),
-                             height() * window()->devicePixelRatio());
+            const QSize extent = requestedRenderExtent();
+            m_submittedExtent.store(extent);
+            node->initVulkan(extent.width(), extent.height());
 
             connect(
                 node, &TextureNode::redraw, window(), &QQuickWindow::update, Qt::QueuedConnection);
@@ -379,13 +408,28 @@ void SceneObject::centerPointer() {
         m_scene->mouseInput(wallpaper::SCENE_POINTER_CENTER, wallpaper::SCENE_POINTER_CENTER);
 }
 
-void SceneObject::mousePressEvent(QMouseEvent* event) {}
+void SceneObject::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) m_mousePress = event->position();
+}
+void SceneObject::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) return;
+    const auto press = std::exchange(m_mousePress, std::nullopt);
+    if (! press || width() <= 0 || height() <= 0) return;
+    const QPointF position = event->position();
+    if ((position - *press).manhattanLength() > QGuiApplication::styleHints()->startDragDistance())
+        return;
+    m_scene->mouseClick(static_cast<float>(position.x() / width()),
+                        static_cast<float>(position.y() / height()));
+}
 void SceneObject::mouseMoveEvent(QMouseEvent* event) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
     auto pos = event->position();
 #else
     auto pos = event->localPos();
 #endif
+    if (m_mousePress && (pos - *m_mousePress).manhattanLength() >
+                            QGuiApplication::styleHints()->startDragDistance())
+        m_mousePress.reset();
     m_scene->mouseInput(pos.x() / width(), pos.y() / height());
 }
 

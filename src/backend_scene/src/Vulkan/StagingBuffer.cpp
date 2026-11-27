@@ -9,7 +9,9 @@ using namespace wallpaper::vulkan;
 #define CHECK_REF(ref, act)                                                  \
     if (! ref) {                                                             \
         LOG_ERROR("stage ref not available, index %d", ref.m_virtual_index); \
-        { act; }                                                             \
+        {                                                                    \
+            act;                                                             \
+        }                                                                    \
     }
 
 StagingBuffer::StagingBuffer(const Device& d, VkDeviceSize size, VkBufferUsageFlags usage)
@@ -23,10 +25,10 @@ std::optional<VmaBufferParameters> CreateGpuBuffer(VmaAllocator allocator, VkBuf
     do {
         VmaBufferParameters buffer;
         VkBufferCreateInfo  ci {
-             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-             .pNext = nullptr,
-             .size  = size,
-             .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage,
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .size  = size,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage,
         };
         buffer.req_size                  = ci.size;
         VmaAllocationCreateInfo vma_info = {};
@@ -47,11 +49,11 @@ void RecordCopyBuffer(const BufferParameters& dst_buf, const BufferParameters& s
     cmd.CopyBuffer(src_buf.handle, dst_buf.handle, copy);
 
     VkBufferMemoryBarrier in_bar {
-        .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-        .pNext         = nullptr,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
-                         VK_ACCESS_UNIFORM_READ_BIT,
+        .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext               = nullptr,
+        .srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask       = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+                               VK_ACCESS_UNIFORM_READ_BIT,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .buffer              = dst_buf.handle,

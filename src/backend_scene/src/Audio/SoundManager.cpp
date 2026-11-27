@@ -121,10 +121,8 @@ float SoundManager::Volume() const { return pImpl->device.Volume(); }
 bool SoundManager::Muted() const { return pImpl->device.Muted(); }
 void SoundManager::SetMuted(bool v) {
     pImpl->device.SetMuted(v);
-    if (! Muted()) {
-        Init();
-    } else {
-        pImpl->device.UnInit();
-    }
+    // Keep the mounted streams and their positions while muted. A scene that
+    // started muted opens a device only when the user turns on audio.
+    if (! v && ! IsInited()) Init();
 }
 void SoundManager::SetVolume(float v) { pImpl->device.SetVolume(v); }

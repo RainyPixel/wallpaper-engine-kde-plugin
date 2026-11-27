@@ -18,12 +18,12 @@
 #define MA_NO_COREAUDIO
 #define MA_NO_ENCODING
 #define STB_VORBIS_HEADER_ONLY
-#include <miniaudio/extras/stb_vorbis.c> /* Enables Vorbis decoding. */
+#include <stb_vorbis.c> /* Enables Vorbis decoding. */
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio/miniaudio.h>
 /* stb_vorbis implementation must come after the implementation of miniaudio. */
 #undef STB_VORBIS_HEADER_ONLY
-#include <miniaudio/extras/stb_vorbis.c> /* Enables Vorbis decoding. */
+#include <stb_vorbis.c> /* Enables Vorbis decoding. */
 
 namespace miniaudio
 {
@@ -53,7 +53,7 @@ public:
         ma_result result = ma_decoder_init(Read, Seek, this, &config, &m_decoder);
         m_inited         = result == MA_SUCCESS;
         if (! m_inited) {
-            LOG_ERROR("init decoder failed");
+            LOG_ERROR("init decoder failed: %s", ma_result_description(result));
         }
         return m_inited;
     }
@@ -61,7 +61,7 @@ public:
         if (! m_inited) return 0;
         decltype(frameCount) readed { 0 };
         ma_result result = ma_decoder_read_pcm_frames(&m_decoder, pData, frameCount, &readed);
-        return result == MA_SUCCESS ? readed : 0;
+        return result == MA_SUCCESS || result == MA_AT_END ? readed : 0;
     }
     bool IsInited() { return m_inited; }
 
@@ -70,7 +70,7 @@ private:
                           size_t* pBytesRead) {
         auto* pDecoder = static_cast<Decoder<TStream>*>(pMaDecoder->pUserData);
         *pBytesRead    = pDecoder->m_stream.Read(pBufferOut, bytesToRead);
-        return MA_SUCCESS;
+        return *pBytesRead > 0 ? MA_SUCCESS : MA_AT_END;
     }
     static ma_result Seek(ma_decoder* pMaDecoder, ma_int64 byteOffset, ma_seek_origin origin) {
         auto* pDecoder = static_cast<Decoder<TStream>*>(pMaDecoder->pUserData);
@@ -104,26 +104,14 @@ public:
 public:
     bool Init(const DeviceDesc& d) {
         if (IsInited()) return true; // already inited
-        ma_result result;
-        auto      config = GenMaDeviceConfig(d);
-        Stop();
-        result = ma_device_init(NULL, &config, &m_device);
-        if (result == MA_SUCCESS) {
-            LOG_INFO("sound device inited");
-        }
-        if (result != MA_SUCCESS || ! IsInited()) {
+        auto config = GenMaDeviceConfig(d);
+        if (ma_device_init(nullptr, &config, &m_device) != MA_SUCCESS) {
             LOG_ERROR("can't init sound device");
-            UnInit();
             return false;
         }
         if (m_device.playback.format != ma_format_f32) {
             LOG_ERROR("wrong playback format");
-            UnInit();
-            return false;
-        }
-        if (ma_device_start(&m_device) != MA_SUCCESS) {
-            LOG_ERROR("can't start sound device");
-            UnInit();
+            ma_device_uninit(&m_device);
             return false;
         }
         {
@@ -132,7 +120,12 @@ public:
                 el.chn->PassDeviceDesc(GetDesc());
             }
         }
-        Start();
+        if (ma_device_start(&m_device) != MA_SUCCESS) {
+            LOG_ERROR("can't start sound device");
+            ma_device_uninit(&m_device);
+            return false;
+        }
+        LOG_INFO("sound device inited");
         return true;
     }
     bool IsInited() const { return m_device.state.value != ma_device_state_uninitialized; }
@@ -205,10 +198,11 @@ private:
     }
     void data_callback(void* pOutput, const void* pInput, ma_uint32 frameCount) {
         (void)pInput;
-        if (! m_running || m_muted) return;
-        const auto phyChannels    = m_device.playback.channels;
-        const auto framesSize     = frameCount * phyChannels;
-        const auto framesByteSize = framesSize * sizeof(float);
+        if (! m_running || m_muted.load(std::memory_order_relaxed)) return;
+        const float volume         = m_volume.load(std::memory_order_relaxed);
+        const auto  phyChannels    = m_device.playback.channels;
+        const auto  framesSize     = frameCount * phyChannels;
+        const auto  framesByteSize = framesSize * sizeof(float);
         {
             if (m_frameBuffer.size() < framesByteSize) m_frameBuffer.resize(framesByteSize);
             // std::memset(pOutput, 0, framesByteSize);
@@ -224,8 +218,8 @@ private:
                 if (framesReaded == 0) {
                     m_channels[i].end = true;
                 } else {
-                    for (size_t i = 0; i < framesSize; i++)
-                        pOutput_float[i] += m_volume * pBuffer_float[i];
+                    for (size_t i = 0; i < framesReaded * phyChannels; i++)
+                        pOutput_float[i] += volume * pBuffer_float[i];
                 }
             }
             m_channels.erase(std::remove_if(m_channels.begin(),
@@ -253,10 +247,10 @@ private:
     };
     ma_device         m_device {}; // must init c struct
     std::mutex        m_mutex;     // for operating channel vector
-    std::atomic<bool> m_running { false };
+    std::atomic<bool> m_running { true };
 
-    float m_volume { 1.0f };
-    bool  m_muted { false };
+    std::atomic<float> m_volume { 1.0f };
+    std::atomic<bool>  m_muted { false };
 
     std::vector<ChannelWrap> m_channels;
     std::vector<uint8_t>     m_frameBuffer;

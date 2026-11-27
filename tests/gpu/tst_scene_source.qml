@@ -61,5 +61,19 @@ Item {
             primary.source = Qt.resolvedUrl("scenes/red/scene.json");
             expectColor(primary, 255);
         }
+
+        function test_extentChange() {
+            const viewer = createTemporaryObject(sceneComponent, root);
+            verify(viewer);
+            verify(!viewer.needsResize(), "the first initialization uses the current extent");
+            viewer.play();
+            expectColor(viewer, 255);
+            verify(!viewer.needsResize());
+
+            viewer.width = 352;
+            verify(viewer.needsResize(), "an existing renderer needs a new pixel extent");
+            viewer.width = 320;
+            verify(!viewer.needsResize(), "returning to the submitted extent cancels resize");
+        }
     }
 }

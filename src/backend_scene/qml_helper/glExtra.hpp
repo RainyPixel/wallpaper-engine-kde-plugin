@@ -13,7 +13,7 @@ class GlExtra {
 public:
     GlExtra();
     ~GlExtra();
-    bool init(void* get_proc_address(const char*));
+    bool init();
     uint genExTexture(wallpaper::ExHandle&);
     void deleteTexture(uint);
 

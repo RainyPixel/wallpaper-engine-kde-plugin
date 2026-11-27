@@ -16,6 +16,7 @@ struct ShaderReflected {
         uint   offset;
         size_t size { 0 };
         size_t num { 1 }; // for array,vector,matrix
+        size_t scalar_array_stride { 0 };
     };
     struct Block {
         int         index;

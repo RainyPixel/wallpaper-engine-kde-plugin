@@ -32,10 +32,16 @@ Flickable {
     property string cfg_MpvHwdec
     property alias cfg_Speed: spin_speed.dValue
     property alias cfg_MuteAudio: ckbox_muteAudio.checked
+    property alias muteAllWallpapers: masterMute.checked
+    signal muteAllWallpapersEdited
+    signal sharedModeEdited
     property alias cfg_MouseInput: ckbox_mouseInput.checked
     property alias cfg_ResumeTime: resumeSpin.value
     property alias cfg_SwitchTimer: randomSpin.value
     property alias cfg_RandomizeWallpaper: ckbox_randomizeWallpaper.checked
+    property string followSteamUser
+    signal followSteamUserEdited(string key)
+    property var steamPaths: ({})
     property alias cfg_NoRandomWhilePaused: ckbox_noRandomWhilePaused.checked
     property alias cfg_GlobalMode: ckbox_globalMode.checked
     property alias cfg_PauseFilterByScreen: ckbox_pauseFilterByScreen.checked
@@ -44,6 +50,23 @@ Flickable {
     property alias cfg_PauseBatPercent: spin_pauseBatPercent.value
 
     property alias cfg_PauseOnGamemode: chkbox_pauseOnGameMode.checked
+
+    WallpaperEngineFollower {
+        id: followEditor
+        property var inputs: [settingTab.steamPaths, settingTab.followSteamUser]
+        onInputsChanged: configure(inputs[0] || {}, inputs[1], true)
+    }
+
+    readonly property var followChoices: {
+        const sections = followEditor.sections;
+        const choices = [{ label: qsTr("Off"), key: "" }];
+        for (const section of sections)
+            choices.push({ label: section, key: section });
+        const saved = settingTab.followSteamUser;
+        if (saved && !sections.includes(saved))
+            choices.push({ label: qsTr("%1 (unavailable)").arg(saved), key: saved });
+        return choices;
+    }
 
     Layout.fillWidth: true
     ScrollBar.vertical: ScrollBar { id: scrollbar }
@@ -222,11 +245,33 @@ Flickable {
                 }
             }
             OptionItem {
+                text: qsTr("Follow Wallpaper Engine")
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/link.svg'
+                actor: ComboBox {
+                    model: settingTab.followChoices
+                    textRole: "label"
+                    currentIndex: settingTab.followChoices.findIndex(
+                                      choice => choice.key === settingTab.followSteamUser)
+                    onActivated: index => settingTab.followSteamUserEdited(model[index].key)
+                    Accessible.name: qsTr("Wallpaper Engine profile")
+                }
+                contentBottom: Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.disabledTextColor
+                    text: followEditor.status
+                        || qsTr("Use the saved Wallpaper Engine selection. Randomization pauses while following.")
+                }
+            }
+
+            OptionItem {
                 text: 'Randomize Timer'
                 text_color: Kirigami.Theme.textColor
                 icon: '../../images/time.svg'
                 actor: Switch {
                     id: ckbox_randomizeWallpaper
+                    enabled: !settingTab.followSteamUser
                 }
                 contentBottom: ColumnLayout {
                     Text {
@@ -275,6 +320,7 @@ Flickable {
                     id: ckbox_globalMode
                     // reflect the real shared state, not this screen's stale copy
                     Component.onCompleted: checked = globalCfg.enabled
+                    onToggled: settingTab.sharedModeEdited()
                 }
                 contentBottom: Text {
                     Layout.fillWidth: true
@@ -301,7 +347,22 @@ Flickable {
 
 
             OptionItem {
-                text: "Mute Audio"
+                text: "Mute all wallpapers"
+                text_color: Kirigami.Theme.textColor
+                icon: '../../images/volume-off.svg'
+                actor: Switch {
+                    id: masterMute
+                    onToggled: settingTab.muteAllWallpapersEdited()
+                }
+                contentBottom: Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.disabledTextColor
+                    text: "Mute wallpaper audio on every screen. Turning this off restores each wallpaper’s audio settings."
+                }
+            }
+            OptionItem {
+                text: "Mute audio on this screen"
                 text_color: Kirigami.Theme.textColor
                 icon: ckbox_muteAudio.checked
                     ? '../../images/volume-off.svg'

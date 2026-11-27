@@ -17,7 +17,7 @@ jobs:
       - name: Install git (needed for checkout action inside container)
         run: pacman -Sy --noconfirm git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Checkout submodules
         run: |
@@ -39,6 +39,8 @@ jobs:
             qt6-webengine \
             glfw \
             vulkan-headers \
+            freetype2 \
+            libpulse \
             mpv \
             lz4
 
@@ -79,7 +81,7 @@ jobs:
       - name: Install git
         run: dnf install -y git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Checkout submodules
         run: |
@@ -101,6 +103,8 @@ jobs:
             ninja-build \
             extra-cmake-modules \
             vulkan-headers \
+            freetype-devel \
+            pulseaudio-libs-devel \
             plasma-workspace-devel \
             kf6-plasma-devel \
             kf6-kcoreaddons-devel \
@@ -139,7 +143,7 @@ jobs:
       - name: Install git (needed for checkout action inside container)
         run: pacman -Sy --noconfirm git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         # No submodules needed — the host does not build the scene renderer
 
       - name: Install build dependencies

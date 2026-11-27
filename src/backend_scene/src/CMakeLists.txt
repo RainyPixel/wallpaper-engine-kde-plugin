@@ -1,5 +1,6 @@
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Freetype REQUIRED)
 pkg_check_modules(LZ4 REQUIRED liblz4)
 
 option(ENABLE_RENDERDOC "Build with renderdoc api" OFF)
@@ -60,6 +61,8 @@ add_library(
   WPParticleParser.cpp
   WPShaderParser.cpp
   WPSceneParser.cpp
+  WPSceneText.cpp
+  WPSceneScript.cpp
   WPShaderValueUpdater.cpp
   WPTexImageParser.cpp
   WPSoundParser.cpp
@@ -82,7 +85,7 @@ set(InteralLib
 target_link_libraries(
   ${PROJECT_NAME}
   PUBLIC wpUtils
-  PRIVATE ${InteralLib} nlohmann_json ${LZ4_LIBRARIES}
+  PRIVATE ${InteralLib} nlohmann_json ${LZ4_LIBRARIES} Freetype::Freetype
           ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
 
 target_include_directories(${PROJECT_NAME} PUBLIC . Swapchain)

@@ -18,6 +18,10 @@
       <label>Wallpaper Source</label>
       <default></default>
     </entry>
+    <entry name="FollowSteamUser" type="String">
+      <label>Follow this Wallpaper Engine profile</label>
+      <default></default>
+    </entry>
     <entry name="BackgroundColor" type="String">
       <label>Last folder used</label>
       <default>black</default>

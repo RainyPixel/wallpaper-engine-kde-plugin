@@ -93,6 +93,18 @@ private slots:
         QCOMPARE(enabled.count(), 1);
     }
 
+    void unrelatedSettingPreservesMuteChangedByAnotherWriter() {
+        GlobalConfigBackend settingsDialog;
+        GlobalConfigBackend otherDialog;
+        QVERIFY(otherDialog.setValue("MuteAllWallpapers", true));
+        QVERIFY(settingsDialog.setValue("SpanScreens", true));
+
+        QVERIFY(settingsDialog.value("MuteAllWallpapers").toBool());
+        GlobalConfigBackend reopened;
+        QVERIFY(reopened.value("MuteAllWallpapers").toBool());
+        QVERIFY(reopened.value("SpanScreens").toBool());
+    }
+
     void invalidFile_preservesMemoryAndBytes() {
         GlobalConfigBackend backend;
         QVERIFY(backend.setValues({ { "enabled", true }, { "fps", 30 } }));

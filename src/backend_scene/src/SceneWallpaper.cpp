@@ -24,6 +24,8 @@
 #include "VulkanRender/VulkanRender.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <ranges>
 #include <sstream>
 #include <mutex>
 #include <vector>
@@ -172,6 +174,7 @@ public:
         CMD_SET_SPEED,
         CMD_SET_FPS,
         CMD_SCREENSHOT,
+        CMD_CLICK,
         CMD_STOP,
         CMD_DRAW,
         CMD_NO
@@ -197,6 +200,7 @@ public:
                 CASE_CMD(SET_SPEED);
                 CASE_CMD(SET_FPS);
                 CASE_CMD(SCREENSHOT);
+                CASE_CMD(CLICK);
                 CASE_CMD(INIT_VULKAN);
             default: break;
             }
@@ -268,8 +272,41 @@ private:
                 frame_timer.Run();
         }
     }
+    MHANDLER_CMD(CLICK) {
+        float x, y;
+        if (! m_scene || ! m_scene->activeCamera || ! msg->findFloat("x", &x) ||
+            ! msg->findFloat("y", &y) || x < 0 || x > 1 || y < 0 || y > 1)
+            return;
+
+        const auto vp = m_scene->activeCamera->GetViewProjectionMatrix();
+        for (const auto& click : std::ranges::reverse_view(m_scene->soundClicks)) {
+            click.node->UpdateTrans();
+            const Eigen::Matrix4d mvp       = vp * click.node->ModelTrans();
+            const auto            transform = mvp.fullPivLu();
+            if (! transform.isInvertible()) continue;
+            const auto coordinate = [&transform, x, y](double z) -> Eigen::Vector3d {
+                const Eigen::Vector4d position =
+                    transform.solve(Eigen::Vector4d(2.0 * x - 1.0, 1.0 - 2.0 * y, z, 1.0));
+                return position.hnormalized();
+            };
+            const Eigen::Vector3d near      = coordinate(-1.0);
+            const Eigen::Vector3d far       = coordinate(1.0);
+            const Eigen::Vector3d direction = far - near;
+            if (std::abs(direction.z()) < 1e-9) continue;
+            const Eigen::Vector3d point = near - direction * (near.z() / direction.z());
+            if (std::abs(point.x()) <= click.width / 2.0 &&
+                std::abs(point.y()) <= click.height / 2.0) {
+                click.playing->store(true, std::memory_order_relaxed);
+                return;
+            }
+        }
+    }
     MHANDLER_CMD(DRAW) {
         frame_timer.FrameBegin();
+        if (! m_scene) {
+            frame_timer.FrameEnd();
+            return;
+        }
         if (m_mirror) {
             if (m_render->mirrorLost()) {
                 // Primary went away: rebuild our graph and re-run the election;
@@ -280,7 +317,7 @@ private:
             } else {
                 // Keep this screen's scene clock advancing while mirroring so a
                 // later re-election doesn't restart a time-based wallpaper from ~0.
-                if (m_scene) m_scene->PassFrameTime(frame_timer.IdeaTime() * m_speed);
+                m_scene->PassFrameTime(frame_timer.IdeaTime() * m_speed);
                 m_render->drawFrame(*m_scene);
             }
             frame_timer.FrameEnd();
@@ -505,6 +542,13 @@ void SceneWallpaper::pause() {
 
 void SceneWallpaper::mouseInput(double x, double y) {
     m_main_handler->renderHandler()->setMousePos(x, y);
+}
+
+void SceneWallpaper::mouseClick(float x, float y) {
+    auto msg = CreateMsgWithCmd(m_main_handler->renderHandler(), RenderHandler::CMD::CMD_CLICK);
+    msg->setFloat("x", x);
+    msg->setFloat("y", y);
+    msg->post();
 }
 
 #define BASIC_TYPE(NAME, TYPENAME)                                                       \

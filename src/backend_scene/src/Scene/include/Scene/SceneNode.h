@@ -32,8 +32,20 @@ public:
     void        SetCamera(const std::string& name) { m_cameraName = name; }
     void        AddMesh(std::shared_ptr<SceneMesh> mesh) { m_mesh = mesh; }
     void        AppendChild(std::shared_ptr<SceneNode> sub) {
-        sub->m_parent = this;
-        m_children.push_back(sub);
+        sub->SetTransformParent(this);
+        m_children.push_back(std::move(sub));
+    }
+    // The transform parent can differ from the draw tree parent. Set it during scene construction.
+    void SetTransformParent(SceneNode* parent) {
+        const bool was_animated = AnimatedTransform();
+        m_parent                = parent;
+        m_animatedAncestor      = parent && parent->AnimatedTransform();
+        m_dirty                 = true;
+        if (was_animated != AnimatedTransform()) {
+            for (auto& child : m_children) {
+                if (child->m_parent == this) child->SetTransformParent(this);
+            }
+        }
     }
     Eigen::Matrix4d GetLocalTrans() const;
 
@@ -41,12 +53,11 @@ public:
     const auto& Rotation() const { return m_rotation; }
     void        SetRotation(Eigen::Vector3f v) { m_rotation = v; }
     void        SetTranslate(Eigen::Vector3f v) { m_translate = v; }
-
-    void CopyTrans(const SceneNode& node) {
-        m_translate = node.m_translate;
-        m_scale     = node.m_scale;
-        m_rotation  = node.m_rotation;
+    void        SetAnimatedScale(float value) {
+        m_scale.setConstant(value);
+        m_animatedScale = true;
     }
+    bool AnimatedTransform() const { return m_animatedScale || m_animatedAncestor; }
 
     // update self modle trans (will update parent before)
     void            UpdateTrans();
@@ -67,11 +78,13 @@ private:
     // mark self and all children
     void MarkTransDirty();
 
-    i32         m_id;
+    i32         m_id { 0 };
     bool        m_offscreen { false };
     std::string m_name;
 
     bool            m_dirty;
+    bool            m_animatedScale { false };
+    bool            m_animatedAncestor { false };
     Eigen::Matrix4d m_trans;
 
     Eigen::Vector3f m_translate { 0.0f, 0.0f, 0.0f };

@@ -10,13 +10,16 @@ URL:     https://github.com/RainyPixel/wallpaper-engine-kde-plugin
 
 # Built from a live git checkout.
 
-BuildRequires: cmake extra-cmake-modules
+BuildRequires: cmake >= 3.22.1
+BuildRequires: extra-cmake-modules
 BuildRequires: vulkan-headers
 BuildRequires: plasma-workspace-devel libplasma-devel
 BuildRequires: kf6-plasma-devel
 BuildRequires: kf6-kcoreaddons-devel
 BuildRequires: kf6-kpackage-devel
 BuildRequires: lz4-devel
+BuildRequires: freetype-devel
+BuildRequires: pulseaudio-libs-devel
 BuildRequires: mpv-libs-devel
 BuildRequires: qt6-qtbase-private-devel
 BuildRequires: qt6-qtwebchannel-devel

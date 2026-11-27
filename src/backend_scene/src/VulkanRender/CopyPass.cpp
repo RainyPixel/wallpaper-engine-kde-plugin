@@ -102,9 +102,9 @@ void CopyPass::execute(const Device& device, RenderingResources& rr) {
             .pNext         = nullptr,
             .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT |
                              VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT,
-            .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image               = dst.handle,

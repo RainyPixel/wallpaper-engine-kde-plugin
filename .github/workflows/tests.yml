@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         # Keep Qt Core/Test compatibility on Ubuntu's older Qt.
         # Supported Qt 6.7+ QML is tested by both full-build jobs.
 

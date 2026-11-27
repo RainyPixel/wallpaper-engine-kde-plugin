@@ -59,6 +59,15 @@ target_include_directories(tst_steampaths PRIVATE ${WEKDE_SRC_DIR})
 target_link_libraries(tst_steampaths PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME tst_steampaths COMMAND tst_steampaths -v2)
 
+add_executable(tst_wallpaperenginefollower
+    tst_wallpaperenginefollower.cpp
+    ${WEKDE_SRC_DIR}/WallpaperEngineFollower.cpp
+    ${WEKDE_SRC_DIR}/SteamPaths.cpp
+)
+target_include_directories(tst_wallpaperenginefollower PRIVATE ${WEKDE_SRC_DIR})
+target_link_libraries(tst_wallpaperenginefollower PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME tst_wallpaperenginefollower COMMAND tst_wallpaperenginefollower)
+
 find_package(Qt6 6.7 QUIET COMPONENTS QuickTest)
 if(Qt6_FOUND AND TARGET Qt6::qmltestrunner)
     add_test(NAME qml_tests COMMAND Qt6::qmltestrunner
@@ -74,9 +83,17 @@ if(WEKDE_GPU_TESTS)
         message(FATAL_ERROR "WEKDE_GPU_TESTS requires the native plugin and Qt QuickTest")
     endif()
     set(gpu_imports "${CMAKE_CURRENT_BINARY_DIR}/gpu-imports")
+    set(gpu_module "${gpu_imports}/com/github/catsout/wallpaperEngineKde")
     file(GENERATE
-        OUTPUT "${gpu_imports}/com/github/catsout/wallpaperEngineKde/qmldir"
-        CONTENT "module com.github.catsout.wallpaperEngineKde\nplugin WallpaperEngineKde $<TARGET_FILE_DIR:WallpaperEngineKde>\n")
+        OUTPUT "${gpu_module}/qmldir"
+        CONTENT "module com.github.catsout.wallpaperEngineKde\nplugin WallpaperEngineKde\n")
+    # Give Qt a complete local module so an installed copy of the plugin
+    # cannot satisfy the library lookup in its place.
+    add_custom_target(wekde_gpu_qml_module ALL
+        COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE:WallpaperEngineKde>
+            "${gpu_module}/$<TARGET_FILE_NAME:WallpaperEngineKde>"
+        DEPENDS WallpaperEngineKde
+        VERBATIM)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gpu-config" "${CMAKE_CURRENT_BINARY_DIR}/gpu-cache")
     add_test(NAME scene_gpu_tests COMMAND Qt6::qmltestrunner
         -input ${CMAKE_CURRENT_SOURCE_DIR}/gpu -import ${gpu_imports})

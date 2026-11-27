@@ -1,5 +1,5 @@
 #include "glExtra.hpp"
-#include <glad/glad.h>
+#include <glad/gl.h>
 #include <vector>
 #include <unistd.h>
 #include "Utils/Logging.h"
@@ -14,6 +14,14 @@ using namespace wallpaper;
 
 namespace
 {
+int loadCurrentContext(QOpenGLContext* context) {
+    const auto load = [](void* data, const char* name) {
+        return static_cast<QOpenGLContext*>(data)->getProcAddress(QByteArray(name));
+    };
+    return context->isOpenGLES() ? gladLoadGLES2UserPtr(load, context)
+                                 : gladLoadGLUserPtr(load, context);
+}
+
 inline char const* const GLErrorToStr(GLenum const err) noexcept {
 #define Enum_GLError(glerr) \
     case glerr: return #glerr;
@@ -63,70 +71,73 @@ static std::array<std::uint8_t, GL_UUID_SIZE_EXT> getUUID() {
     return result;
 }
 
-bool GlExtra::init(void* get_proc_address(const char*)) {
+bool GlExtra::init() {
     do {
         if (inited) break;
-        if (! gladLoadGLLoader((GLADloadproc)get_proc_address)) {
+        QOpenGLContext* current = QOpenGLContext::currentContext();
+        const int       version = current ? loadCurrentContext(current) : 0;
+        if (version == 0) {
             LOG_ERROR("gl: Failed to initialize GLAD");
             break;
         }
-        LOG_INFO("gl: OpenGL version %d.%d loaded", GLVersion.major, GLVersion.minor);
+        LOG_INFO("gl: OpenGL version %d.%d loaded",
+                 GLAD_VERSION_MAJOR(version),
+                 GLAD_VERSION_MINOR(version));
         if (! (GLAD_GL_EXT_memory_object && GLAD_GL_EXT_semaphore)) {
             LOG_ERROR("gl: EXT_memory_object not available");
             break;
         }
-        bool is_low_gl = ! GLAD_GL_VERSION_4_2 && ! GLAD_GL_ES_VERSION_3_0;
+        const int min_version =
+            current->isOpenGLES() ? GLAD_MAKE_VERSION(3, 0) : GLAD_MAKE_VERSION(4, 2);
+        bool is_low_gl = version < min_version;
         if (is_low_gl) {
             LOG_INFO("gl: Context is GL %d.%d, attempting shared GL 4.2 context",
-                     GLVersion.major,
-                     GLVersion.minor);
+                     GLAD_VERSION_MAJOR(version),
+                     GLAD_VERSION_MINOR(version));
 
             // Try to create a shared GL 4.2+ context for external memory operations
-            QOpenGLContext* current = QOpenGLContext::currentContext();
-            if (current) {
-                auto* ctx = new QOpenGLContext();
-                // Use the parent context's format as base, just bump version
-                QSurfaceFormat fmt = current->format();
-                fmt.setVersion(4, 2);
-                ctx->setFormat(fmt);
-                ctx->setShareContext(current);
-                if (ctx->create()) {
-                    auto actual = ctx->format();
-                    LOG_INFO("gl: Shared context created: GL %d.%d",
-                             actual.majorVersion(),
-                             actual.minorVersion());
+            auto* ctx = new QOpenGLContext();
+            // Use the parent context's format as base, just bump version
+            QSurfaceFormat fmt = current->format();
+            fmt.setVersion(4, 2);
+            ctx->setFormat(fmt);
+            ctx->setShareContext(current);
+            if (ctx->create()) {
+                auto actual = ctx->format();
+                LOG_INFO("gl: Shared context created: GL %d.%d",
+                         actual.majorVersion(),
+                         actual.minorVersion());
 
-                    auto* surface = new QOffscreenSurface();
-                    surface->setFormat(actual);
-                    surface->create();
+                auto* surface = new QOffscreenSurface();
+                surface->setFormat(actual);
+                surface->create();
 
-                    // Switch to new context to re-init GLAD with 4.2+ functions
-                    if (ctx->makeCurrent(surface)) {
-                        if (gladLoadGLLoader((GLADloadproc)get_proc_address)) {
-                            LOG_INFO("gl: GLAD reloaded with GL %d.%d",
-                                     GLVersion.major,
-                                     GLVersion.minor);
-                            m_shared_ctx     = ctx;
-                            m_surface        = surface;
-                            m_use_shared_ctx = true;
-                            is_low_gl        = false;
-                        } else {
-                            LOG_ERROR("gl: Failed to reload GLAD on shared context");
-                        }
-                        // Switch back to Plasma context
-                        current->makeCurrent(current->surface());
+                // Switch to new context to re-init GLAD with 4.2+ functions
+                if (ctx->makeCurrent(surface)) {
+                    if (const int shared_version = loadCurrentContext(ctx)) {
+                        LOG_INFO("gl: GLAD reloaded with GL %d.%d",
+                                 GLAD_VERSION_MAJOR(shared_version),
+                                 GLAD_VERSION_MINOR(shared_version));
+                        m_shared_ctx     = ctx;
+                        m_surface        = surface;
+                        m_use_shared_ctx = true;
+                        is_low_gl        = false;
                     } else {
-                        LOG_ERROR("gl: Failed to makeCurrent on shared context");
+                        LOG_ERROR("gl: Failed to reload GLAD on shared context");
                     }
-
-                    if (! m_use_shared_ctx) {
-                        delete surface;
-                        delete ctx;
-                    }
+                    // Switch back to Plasma context
+                    current->makeCurrent(current->surface());
                 } else {
-                    LOG_INFO("gl: Shared GL 4.2 context not available, using fallback");
+                    LOG_ERROR("gl: Failed to makeCurrent on shared context");
+                }
+
+                if (! m_use_shared_ctx) {
+                    delete surface;
                     delete ctx;
                 }
+            } else {
+                LOG_INFO("gl: Shared GL 4.2 context not available, using fallback");
+                delete ctx;
             }
         }
 

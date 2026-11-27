@@ -141,8 +141,8 @@ inline size_t GenRopeParticleData(std::span<const Particle>   particles,
         float in_ParticleTrailLength   = particles.size();
         float in_ParticleTrailPosition = i - 1;
 
-        Vector3f cp_vec = AngleAxisf(p.rotation[2] + M_PI / 2.0f, Vector3f::UnitZ()) *
-                          Vector3f { 0.0f, size / 2.0f, 0.0f };
+        Vector3f cp_vec  = AngleAxisf(p.rotation[2] + M_PI / 2.0f, Vector3f::UnitZ()) *
+                           Vector3f { 0.0f, size / 2.0f, 0.0f };
         Vector3f pos_vec = Vector3f { p.position } - Vector3f { pre_p.position };
 
         cp_vec       = pos_vec.normalized().dot(cp_vec) > 0 ? cp_vec : -1.0f * cp_vec;

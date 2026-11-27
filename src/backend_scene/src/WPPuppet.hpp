@@ -14,6 +14,8 @@ namespace wallpaper
 class WPPuppetLayer;
 
 class WPPuppet {
+    friend class WPPuppetLayer;
+
 public:
     enum class PlayMode
     {
@@ -73,6 +75,7 @@ public:
     void                             prepared();
 
 private:
+    void EvaluateFrame(WPPuppetLayer&, double time, std::span<Eigen::Affine3f>) const noexcept;
     std::vector<Eigen::Affine3f> m_final_affines;
 };
 
@@ -94,9 +97,10 @@ public:
         double cur_time { 0.0f };
     };
 
-    void prepared(std::span<AnimationLayer>);
+    void prepared(std::span<const AnimationLayer>);
 
     std::span<const Eigen::Affine3f> genFrame(double time) noexcept;
+    std::vector<Eigen::Affine3f>     PoseAt(double time) const;
 
     void updateInterpolation(double time) noexcept;
 

@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <memory>
 
 namespace wallpaper
 {
@@ -17,6 +19,7 @@ class WPSoundObject;
 }
 class WPSoundParser {
 public:
-    static void Parse(const wpscene::WPSoundObject&, fs::VFS&, audio::SoundManager&);
+    static std::shared_ptr<std::atomic_bool> Parse(const wpscene::WPSoundObject&, fs::VFS&,
+                                                   audio::SoundManager&);
 };
 } // namespace wallpaper

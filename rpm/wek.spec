@@ -16,6 +16,7 @@ BuildRequires: vulkan-headers
 BuildRequires: plasma-workspace-devel libplasma-devel
 BuildRequires: kf6-plasma-devel
 BuildRequires: kf6-kcoreaddons-devel
+BuildRequires: kf6-kconfig-devel
 BuildRequires: kf6-kpackage-devel
 BuildRequires: lz4-devel
 BuildRequires: freetype-devel

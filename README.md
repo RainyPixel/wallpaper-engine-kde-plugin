@@ -77,7 +77,7 @@ sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing
 sudo dnf install -y ffmpeg-devel --allowerasing
 
 sudo dnf install vulkan-headers plasma-workspace-devel kf6-plasma-devel \
-    kf6-kcoreaddons-devel kf6-kpackage-devel gstreamer1-libav \
+    kf6-kcoreaddons-devel kf6-kconfig-devel kf6-kpackage-devel gstreamer1-libav \
     lz4-devel mpv-libs-devel qt6-qtbase-private-devel libplasma-devel \
     qt6-qtwebchannel-devel cmake extra-cmake-modules \
     freetype-devel pulseaudio-libs-devel

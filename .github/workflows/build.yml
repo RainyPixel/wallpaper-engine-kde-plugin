@@ -108,6 +108,7 @@ jobs:
             plasma-workspace-devel \
             kf6-plasma-devel \
             kf6-kcoreaddons-devel \
+            kf6-kconfig-devel \
             kf6-kpackage-devel \
             lz4-devel \
             mpv-libs-devel \
